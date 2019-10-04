@@ -22,7 +22,8 @@ Open your preferred text editor, and change lines 33 and 35. Line 33 should be t
 ### Step 2. Execute
 To run it, do
 
-``` $ python3 identify_spikes.py
+```
+$ python3 identify_spikes.py
 ```
 
 Depending on how you set up your environment, the program name may be python or python3 (especially if your system has python 2.7 installed previously...).
