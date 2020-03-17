@@ -4,7 +4,7 @@ Repository for the development of an AI QC and data fill system for NOAA water l
 ## NOAA AI Water Level Processing
 
 * PI: Greg Dusek
-* CO-OPS Team: Armin Pruessner, Val Soika, George Story, Elim Thompson, Lindsay Abrams, Katerina Glebushko
+* CO-OPS Team: Armin Pruessner, George Story, Elim Thompson, Lindsay Abrams, Erick DiFiore (OCS)
 * External Team: Philippe Tissot - CBI, Texas A&M CC; Xu Chen - COAPS, Florida State
 * Git repository: https://github.com/greg-dusek/NOAA-WL-AI
 * Google doc: https://docs.google.com/document/d/1YvMKjcHizZp5HMJsiyQvzoB4vWxkbQqT-bZIJAyaHAY/edit
@@ -21,12 +21,13 @@ This project represents an initial investigation into the application of Artific
 
 ### Proposed Timeline
 
-* Aug 2019 - Initial scoping and prototype data compiled
-* Sep 2019 - Initial data cleaning of prototype data completed and some initial ideas explored at OceanHackWeek 2019
-* Oct 2019 - Project documentation, github repository started
-* Dec 2019 - Initial results should be completed for 5 prototype stations
-* Jan 2020 - AMS annual meeting presentation on initial results
-* Mar 2020 - Finalize initial approach and begin scoping application to larger dataset
-* Jun 2020 - Demonstrate approach on larger representative subset of NWLON stations (capturing different geographic areas, sensors and tide types)
+* Aug 2019 - Initial scoping and prototype data compiled (DONE)
+* Sep 2019 - Initial data cleaning of prototype data completed and some initial ideas explored at OceanHackWeek 2019 (DONE)
+* Oct 2019 - Project documentation, github repository started (DONE)
+* Dec 2019 - Initial results should be completed for 5 prototype stations (DONE)
+* Jan 2020 - AMS annual meeting presentation on initial results (DONE - [find the recorded pres here](https://ams.confex.com/ams/2020Annual/meetingapp.cgi/Paper/365782))
+* Mar 2020 - Finalize initial approach and begin scoping application to larger dataset (working on this now)
+* Jun 2020 - Create HPC Cloud Jupyter Hub for 
+* Jun 2020 - Demonstrate approach for (capturing different geographic areas, sensors and tide types)
 * Jul 2020 - Complete peer reviewed journal article documenting the approach
 * Sep 2020 - Demonstrate approach on all NWLON stations.  If successful, begin planning for operational implementation in FY21 
