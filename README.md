@@ -6,7 +6,7 @@ Repository for the development of an AI QC and data fill system for NOAA water l
 * PI: Greg Dusek
 * CO-OPS Team: Armin Pruessner, George Story, Elim Thompson, Lindsay Abrams, Erick DiFiore (OCS)
 * External Team: Philippe Tissot - CBI, Texas A&M CC; Xu Chen - COAPS, Florida State
-* Git repository: https://github.com/greg-dusek/NOAA-WL-AI
+* Git repository: https://github.com/NOAA-CO-OPS/NOAA-WL-AI
 * Google doc: https://docs.google.com/document/d/1YvMKjcHizZp5HMJsiyQvzoB4vWxkbQqT-bZIJAyaHAY/edit
 
 ### Important Note
