@@ -665,7 +665,11 @@ class station (object):
 
         ## 7. Other primary type from 'Other primary sensor used?'
         self._check_df_has_column (info_row, 'Other primary sensor used?', 'station info')
-        self.other_primary_type = info_row['Other primary sensor used?'].values[0].strip()
+        other_primary_type = info_row['Other primary sensor used?'].values[0]
+        #  If no string value in this cell, nothing else need to be set.
+        if not isinstance (other_primary_type, str): return 
+        #  Otherwise, set other primary type and its period
+        self.other_primary_type = other_primary_type.strip()
 
         ## 8. The time period of the other primary type
         self._check_df_has_column (info_row, 'Other primary sensor dates', 'station info')
