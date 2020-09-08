@@ -484,8 +484,7 @@ class station (object):
         ## 2. Check if input array has a specific length
         if not len (array) == length:
             message = 'Input, {0}, does not have a length of {1}.'
-            self._logger.fatal (message.format (array, length))
-            raise IOError (message.format (array, length))
+            self._logger.warn (message.format (array, length))
 
     def _check_is_timestamp (self, adate):
 
