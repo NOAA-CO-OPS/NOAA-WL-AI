@@ -21,11 +21,11 @@ After that, open a terminal or command prompt.
 
 ```
 > cd C:\to\where\data\cleaning\package\is
-> python clean_data.py --raw_path 'C:\where\armin\raw\data\is\'
-                       --proc_path 'C:\where\you\want\processed\data\to\live\'
-                       --station_info_csv 'C:\path\to\WLAIStationList.csv'
-                       --log_level info
-                       --do_midstep_files
+> python clean_data.py --raw_path 'C:\\where\\armin\\raw\\data\\is\\' \
+                       --proc_path 'C:\\where\\you\\want\\processed\\data\\to\\live\\' \
+                       --station_info_csv 'C:\\path\\to\\WLAIStationList.csv' \
+                       --log_level info \
+                       --do_midstep_files 
 ```
 
 * --log-level accepts info, debug, warn, and error
