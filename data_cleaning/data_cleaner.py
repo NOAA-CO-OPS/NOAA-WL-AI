@@ -420,7 +420,7 @@ class data_cleaner (object):
         axis.set_xlabel ('# spikes / # total {0}'.format (dtype), fontsize=10)
         ##  Format y-axis
         yvalues = numpy.log10 (stats_df[key])
-        yvalues = yvalues [numpy.isfinite (yvalues)]
+        yvalues [~numpy.isfinite (yvalues)] = 0
         ymin = numpy.floor (max (0, min(yvalues)))
         ymax = numpy.ceil (max(yvalues))
         yticks = numpy.linspace (ymin, ymax, 6)        
