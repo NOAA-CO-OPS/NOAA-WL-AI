@@ -68,7 +68,7 @@
 ## primary_offsets = astation.primary_offsets
 ## backup_gain_offsets = astation.backup_gain_offsets
 ##
-## # Clean & store raw data. Notes
+## # Clean raw data & store as csv. Notes
 ## #  * Output all train / validation / test into 1 csv file
 ## #  * No neighbor info is included
 ## cleaned_df = astation.clean_raw_data ()
@@ -86,6 +86,15 @@
 ## Import libraries
 ###############################################
 import numpy, pandas, logging, os
+from scipy.interpolate import interp1d
+
+import matplotlib
+matplotlib.use ('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+plt.rc ('text', usetex=False)
+plt.rc ('font', family='sans-serif')
+plt.rc ('font', serif='Computer Modern Roman')
 
 ###############################################
 ## Define constants
@@ -119,12 +128,18 @@ CLEAN_STATS_KEYS = ['has_bad_results', 'n_raw', 'has_repeated_raw', 'n_total',
                     'n_capped_primary_sigma_max', 'n_capped_primary_sigma_min',
                     'n_capped_backup_sigma_max', 'n_capped_backup_sigma_min']
 
+# Keys for statistics dictionary for the difference between primary and verified
+DIFF_STATS_KEYS = ['lower', 'upper', 'min', 'max', 'mean']
+
 # Expected columns in raw primary offset files
 PRIMARY_OFFSET_KEYS = ['BEGIN_DATE_TIME', 'END_DATE_TIME', 'SENSOR_ID', 'OFFSET']
 
 # Columns in converted backup gain / offset dataframe
 RAW_BACKUP_GO_KEYS = ['BEGIN_DATE_TIME', 'B1_DCP', 'PARAMETER_NAME', 'ACC_PARAM_VAL']
 CONVERTED_BACKUP_GO_KEYS = ['BEGIN_DATE_TIME', 'B1_DCP', 'OFFSET', 'GAIN']
+
+# Number of bins in histogram of primary - verified
+HIST_NBINS = 10
 
 # Possible types of number
 NUMBER_TYPES = [float, int, numpy.float, numpy.float16, numpy.float32,
@@ -185,6 +200,7 @@ class station (object):
         self._train_stats = {key:None for key in CLEAN_STATS_KEYS}
         self._validation_stats = {key:None for key in CLEAN_STATS_KEYS}
         self._test_stats = {key:None for key in CLEAN_STATS_KEYS}
+        self._diff_stats = None
 
         ## Logger
         self._logger = logging.getLogger ('station {0}'.format (station_id))
@@ -235,6 +251,9 @@ class station (object):
 
     @property
     def test_stats (self): return self._test_stats
+
+    @property
+    def diff_stats (self): return self._diff_stats
 
     @property
     def create_midstep_files (self): return self._create_midstep_files
@@ -554,6 +573,179 @@ class station (object):
             adict = getattr (self, '_' + dtype + '_stats')
             # Store stats - number of total records in this set
             adict[key] = len (subframe)
+    
+    # +------------------------------------------------------------
+    # | Related to difference between primary and verified
+    # +------------------------------------------------------------
+    def _get_statistics (self, points):
+        
+        ''' A private function to obtain statistics from a set of data points.
+            It builds a cumulative histogram and flips (inverts) it. The mean,
+            min, max, top and bottom 5% are obtained to get a rough shape of
+            the histogram. 
+
+            lower: 5%
+            mean: 50%
+            upper: 95%
+            min: minimum value from all points
+            max: maximum value from all points
+
+            If only 1 value from the entire set of data points, all stats
+            values are equal to that value.
+
+            input params
+            ------------
+            points (array): a set of data points where stats are obtained
+
+            return params
+            -------------
+            stats (dict): 5%, 50%, 95%, and min / max of the data points
+        '''
+        ## Only includes valid points
+        points = points [numpy.isfinite (points)]
+
+        ## If all points are the same, all stats are the same.
+        if len (numpy.unique (points)) == 1:
+            value = numpy.unique (points)[0]
+            return {'lower':value, 'upper':value, 'mean':value, 'min':value, 'max':value}
+
+        dmin, dmax = min (points), max (points)
+        ## Build a histogram to get 2-tailed 90% values
+        hist, edge = numpy.histogram (points, bins=50)
+        cdf = numpy.cumsum (hist) / sum (hist)
+        bins = edge[:-1] + (edge[1:] - edge[:-1])/2.
+        icdf = interp1d (cdf, bins)
+        lowP = max (0.025, min (icdf.x))
+        highP = min (0.975, max (icdf.x))
+        midP = 0.5
+        if highP < lowP:
+            highP = (max (icdf.x) - lowP)*0.975 + lowP
+            midP = (max (icdf.x) - lowP)*0.5 + lowP
+        lower, mean, upper = icdf(lowP), icdf(midP), icdf(highP)
+        return {'lower':float (lower), 'upper':float (upper),
+                'mean':float (mean), 'min':dmin, 'max':dmax}
+
+    def _plot_sub_diff (self, axis, diff_df, reqEdges=None):
+
+        ''' A private function to plot a sub histgram for all dataset types
+            available in input diff_df. There should only be 3 at max. Their
+            histograms are stacked in the order of train, validation, and test.
+            If reqEdges is provided, the x-axis follows the requested bin edges.
+            Otherwise, the bin edges are determined by the min / max values 
+            from the differences. 
+
+            input params
+            ------------
+            axis (matplotlib.Axes): axis on which plots are made
+            diff_df (pandas.DataFrame): data with 'delta' and 'setType' columns
+            reqEdges (array): requested bin edges
+
+            return params
+            -------------
+            edges (array): bin edges used by this histogram
+        '''
+
+        if len (diff_df) == 0: return
+
+        ## Generate histogram by dataset type
+        groups = diff_df.groupby ('setType')
+        if len (groups.groups.keys()) == 0: return
+
+        #  Histogram x-axis based on requested edges if available.
+        params = {'bins':reqEdges}
+        if reqEdges is None:
+            hist_xrange = (diff_df.delta.min(), diff_df.delta.max())
+            params = {'bins':HIST_NBINS, 'range':hist_xrange}
+        hists = groups.apply (numpy.histogram, **params)
+
+        ## Plot stacked histogram
+        reference = numpy.array ([0.] * (HIST_NBINS+1))
+        for dtype in DATASET_TYPES[::-1]:
+            # Next dataset type if not available
+            if not dtype in hists: continue
+            # Get histogram and edges
+            hist, edges = hists.get (dtype)
+            # Stacking the histogram
+            hist = [hist[0]] + list (hist)
+            yvalues = reference + numpy.log10 (hist)
+            # Replace any inf / nan to 0
+            yvalues[~numpy.isfinite(yvalues)] = 0
+            # Determine the color based on dataset type
+            color = '#666666' if dtype=='train' else '#489cbd' if dtype=='validation' else '#ff4f6b'
+            # Plot a stack histogram
+            if reqEdges is not None: edges = reqEdges
+            axis.fill_between (edges, reference, yvalues, color=color,
+                               step='pre', label=dtype)
+            # Update reference
+            reference = yvalues
+
+        ##  Plot legend if more than 1 dataset type
+        if len (groups) > 1: axis.legend (loc=1, fontsize=8)
+
+        ##  Format x-axis
+        edges = edges[numpy.isfinite (edges)]
+        axis.set_xlim ([min (edges), max(edges)])
+        axis.tick_params (axis='x', labelsize=8)
+        axis.set_xlabel ('Primary - Verified [meters]', fontsize=8)    
+        ##  Format y-axis
+        yvalues = yvalues[numpy.isfinite (yvalues)]
+        axis.set_ylim ([numpy.floor (min (yvalues)), numpy.ceil (max (yvalues))])
+        axis.tick_params (axis='y', labelsize=8)
+        axis.set_ylabel ('log10 #', fontsize=8)
+        ##  Plot grid lines
+        for ytick in axis.yaxis.get_majorticklocs():
+            axis.axhline (y=ytick, color='gray', alpha=0.3, linestyle=':', linewidth=0.2)
+        for xtick in axis.xaxis.get_majorticklocs():
+            axis.axvline (x=xtick, color='gray', alpha=0.3, linestyle=':', linewidth=0.2)
+
+        ## Set title
+        dtype = 'all sets' if len (groups) > 1 else list (groups.groups.keys())[0]
+        axis.set_title ('From {0}'.format (dtype), fontsize=9)
+
+        return edges
+
+    def plot_diff_histogram (self, diff_df):
+
+        ''' A public function to plot histograms of differences between primary
+            and verified for all dataset types. All x-axis are the same, based
+            on the range from the full dataset.
+
+            Top left: stacked histogram from all sets
+            Top right: histogram from training set
+            Bottom left: histogram from validation set
+            Bottom right: histogram from testing set
+
+            input params
+            ------------
+            diff_df (pandas.DataFrame): data with 'delta' and 'setType' columns
+        '''
+
+        ## Start plotting!
+        h = plt.figure (figsize=(9, 9))
+        gs = gridspec.GridSpec (2, 2, wspace=0.25, hspace=0.2)
+
+        ## Top left: All records from train, valid, and test sets
+        axis = h.add_subplot (gs[0])
+        main_edges = self._plot_sub_diff (axis, diff_df)
+
+        ## Top right: From training set
+        axis = h.add_subplot (gs[1])
+        self._plot_sub_diff (axis, diff_df[diff_df.setType=='train'], reqEdges=main_edges)
+
+        ## Bottom left: From validation set
+        axis = h.add_subplot (gs[2])
+        self._plot_sub_diff (axis, diff_df[diff_df.setType=='validation'],
+                             reqEdges=main_edges)
+
+        ## Bottom right: From testing set
+        axis = h.add_subplot (gs[3])
+        self._plot_sub_diff (axis, diff_df[diff_df.setType=='test'], reqEdges=main_edges)
+
+        ## Store plot as PDF
+        title = 'Histogram of Primary - Verified at {0}'.format (self.station_id)
+        plt.suptitle (title, fontsize=15)
+        h.savefig ('{0}/{1}_diff_histogram.pdf'.format (self._proc_path, self.station_id))
+        plt.close ('all')
 
     # +------------------------------------------------------------
     # | Set station meta-data from info sheet
@@ -1505,6 +1697,12 @@ class station (object):
             self._logger.info (message.format (len (dataframe[is_spikes])))    
         self._set_stats (dataframe[is_spikes], 'n_spikes')
         
+        ## Plot difference between PRIMARY and VERIFIED histogram
+        diff_df = pandas.concat ([dataframe.PRIMARY - dataframe.VERIFIED,
+                                  dataframe.setType], axis=1)
+        diff_df.columns = ['delta', 'setType']        
+        if self.create_midstep_files: self.plot_diff_histogram (diff_df)
+        self._diff_stats = self._get_statistics (diff_df.delta)
 
         ## For PRIMARY, BACKUP, and their SIGMAs & RESIDUALs, replace all NaNs / missing
         #  entries with 0 and create dummy boolean column with _TRUE suffix in column names

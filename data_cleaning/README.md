@@ -8,6 +8,7 @@ This package was created using python 3.7. Typical packages are required.
 * numpy 1.19.0
 * pandas 1.0.5
 * matplotlib 3.2.2
+* scipy 1.5.2
 
 ### Usage
 
