@@ -85,6 +85,7 @@ TEST_START_DATE = "2019-01-01"
 
 # Columns in stats csv files
 CLEAN_STATS_KEYS = station.CLEAN_STATS_KEYS
+DIFF_STATS_KEYS = station.DIFF_STATS_KEYS
 
 # Number of randomly sampled data in Greg's AI model when training
 N_RANDOM_SAMPLES = 200000
@@ -116,6 +117,7 @@ class data_cleaner (object):
         self._train_stats_df = None
         self._validation_stats_df = None
         self._test_stats_df = None
+        self._diff_stats_df = None
 
         ## Logger
         self._logger = logging.getLogger ('data_cleaner')
@@ -142,6 +144,9 @@ class data_cleaner (object):
 
     @property
     def test_stats (self): return self._test_stats_df
+
+    @property
+    def diff_stats (self): return self._diff_stats_df
 
     @property
     def raw_path (self): return self._raw_path
@@ -378,7 +383,7 @@ class data_cleaner (object):
         return
 
     def _plot_subplot_nan_capped_vs_n_spikes (self, axis, stats_groups, stats_df,
-                                              key, reference, doLegend=False):
+                                              key, dtype, doLegend=False):
 
         ''' A private function to plot sub-plot for nan / capped vs spikes %
             correlation plot for a given dataset type. 
@@ -406,13 +411,13 @@ class data_cleaner (object):
                           s=15, alpha=0.8, label=label)
 
         ##  Format x-axis
-        xmin = this_group.n_spikes_percent.min() - 0.05
+        xmin = 0
         xmax = this_group.n_spikes_percent.max() + 0.05
         xticks = numpy.linspace (xmin, xmax, 6)
         axis.set_xlim ([xmin, xmax])
         axis.set_xticks (xticks)
         axis.tick_params (axis='x', labelsize=8)
-        axis.set_xlabel ('# spikes / {0}'.format (reference), fontsize=10)
+        axis.set_xlabel ('# spikes / # total {0}'.format (dtype), fontsize=10)
         ##  Format y-axis
         ymin = numpy.floor (max (0, min(numpy.log10 (stats_df[key]))))
         ymax = numpy.ceil (max(numpy.log10 (stats_df[key])))
@@ -469,25 +474,25 @@ class data_cleaner (object):
         ## Top left plot: log10 (# nan primary) vs % spikes
         axis = h.add_subplot (gs[0])
         self._plot_subplot_nan_capped_vs_n_spikes (axis, stats_groups, stats_df,
-                                                   'n_nan_primary', reference,
+                                                   'n_nan_primary', dtype,
                                                    doLegend=True)
 
         ## Top right plot: log10 (# nan backup) vs % spikes
         axis = h.add_subplot (gs[1])
         self._plot_subplot_nan_capped_vs_n_spikes (axis, stats_groups, stats_df,
-                                                   'n_nan_backup', reference,
+                                                   'n_nan_backup', dtype,
                                                    doLegend=False)
 
         ## Bottom left plot: log10 (# capped primary) vs % spikes
         axis = h.add_subplot (gs[2])
         self._plot_subplot_nan_capped_vs_n_spikes (axis, stats_groups, stats_df,
-                                                   'n_capped_primary', reference,
+                                                   'n_capped_primary', dtype,
                                                    doLegend=False)
         
         ## Bottom right plot: log10 (# capped backup) vs % spikes
         axis = h.add_subplot (gs[3])
         self._plot_subplot_nan_capped_vs_n_spikes (axis, stats_groups, stats_df,
-                                                   'n_capped_backup', reference,
+                                                   'n_capped_backup', dtype,
                                                    doLegend=False)        
 
         ### Store plot as PDF
@@ -522,6 +527,52 @@ class data_cleaner (object):
         ## Plot correlations of nan and capped data points with spikes per set
         self.plot_nan_capped_vs_n_spikes (dtype)
 
+    def plot_diff_stats (self):
+
+        ## Start plotting!
+        h = plt.figure (figsize=(9, 3))
+        gs = gridspec.GridSpec (1, 1)
+        gs.update (bottom=0.23)
+        axis = h.add_subplot (gs[0])
+
+        ## Plot individual statistics
+        xvalues = numpy.arange (len (self.diff_stats)) + 1
+        yvalues = self.diff_stats['mean'].values
+        yerrors = numpy.array ([yvalues - self.diff_stats['lower'],
+                                self.diff_stats['upper'] - yvalues])
+        axis.errorbar (xvalues, yvalues, yerr=yerrors, marker='o', color='black',
+                       markersize=6, alpha=0.7, linestyle=None, linewidth=0.0,
+                       ecolor='blue', elinewidth=3, capsize=0.0, capthick=0.0)
+        yerrors = numpy.array ([yvalues - self.diff_stats['min'],
+                                self.diff_stats['max'] - yvalues])
+        axis.errorbar (xvalues, yvalues, yerr=yerrors, color='red', 
+                       marker=None, alpha=0.7, linestyle=None, linewidth=0.0,
+                       ecolor='red', elinewidth=1, capsize=0.1, capthick=0.01)
+
+        ##  Format x-axis
+        axis.set_xlim ([min(xvalues) - 1, max(xvalues) + 1])
+        axis.set_xticks (xvalues)
+        axis.set_xticklabels (self.diff_stats.station_id)
+        axis.tick_params (axis='x', labelsize=8, labelrotation=90)
+        ##  Format y-axis
+        axis.set_ylim ([min (self.diff_stats['min']) - 5,
+                        max (self.diff_stats['max']) + 5])
+        axis.tick_params (axis='y', labelsize=8)
+        axis.set_ylabel ('Primary - Verified\n[meters]', fontsize=10)
+
+        ##  Add title
+        axis.set_title ('Distributions of primary - verified', fontsize=12)
+        ##  Plot grid lines
+        for ytick in axis.yaxis.get_majorticklocs():
+            axis.axhline (y=ytick, color='gray', alpha=0.3, linestyle=':', linewidth=0.2)
+        for xtick in axis.xaxis.get_majorticklocs():
+            axis.axvline (x=xtick, color='gray', alpha=0.3, linestyle=':', linewidth=0.2)
+
+        ### Store plot as PDF
+        h.savefig (self.proc_path + '/diff_stats.pdf')
+        plt.close ('all')
+        return
+
     def plot_all_stats (self):
 
         ''' A public function to plot the statistics info of all dataset types.
@@ -532,6 +583,9 @@ class data_cleaner (object):
 
         ## Plot global stats - total number of records & % per set
         self.plot_global_stats()
+
+        ## Plot diff stats - total number of records & % per set
+        self.plot_diff_stats()
 
         ## Plot correlations of nan and capped data points with spikes per set
         for dtype in DATASET_TYPES:
@@ -841,10 +895,12 @@ class data_cleaner (object):
             stats_df (dict): {dtype: stats dataframe}
         '''
 
-        ## Define holders for cleaned dataframe and stats
+        ## Define holders for cleaned dataframe and stats (per set) and
+        ## stats for differences from all sets
         neighbors, dataframes = [], {}
         stats = {key:{subkey:[] for subkey in ['station_id'] + CLEAN_STATS_KEYS}
                  for key in DATASET_TYPES}
+        diff_stats = {key:[] for key in ['station_id'] + DIFF_STATS_KEYS}
 
         ## Loop through each station in the group
         for station_id in station_group:
@@ -854,6 +910,10 @@ class data_cleaner (object):
             neighbors.append (astation.neighbor_id)
             # Cleaned data!
             dataframes[station_id] = astation.clean_raw_data (exclude_nan_verified=exclude_nan_verified)
+            # Extract stats of primary - verified stats
+            diff_stats['station_id'].append (station_id)
+            for key in DIFF_STATS_KEYS:
+                diff_stats[key].append (astation.diff_stats[key])
             # Extract the stats from this station
             for dtype in DATASET_TYPES:
                 stats[dtype]['station_id'].append (station_id)
@@ -879,7 +939,7 @@ class data_cleaner (object):
 
         ## Return the stats as data frame for each set
         stats_df = {key:pandas.DataFrame (value) for key, value in stats.items()}
-        return stats_df
+        return stats_df, pandas.DataFrame (diff_stats)
 
     def clean_stations (self, exclude_nan_verified=False, station_ids=None):
 
@@ -920,14 +980,18 @@ class data_cleaner (object):
 
         ## Load data as groups to avoid memory demands. Stations are grouped
         ## by neighbor stations. 
-        stats_df = None
+        stats_df, diff_df = None, None
         for station_group in station_groups:
             # Clean this group of stations
-            stats = self._clean_station_group (station_group, exclude_nan_verified=exclude_nan_verified)
-            # If this is the first group, just replace stats_df
-            if stats_df is None:
-                stats_df = stats; continue
+            stats, diff = self._clean_station_group (station_group,
+                                    exclude_nan_verified=exclude_nan_verified)
+            # If this is the first group, just replace dataframe
+            if stats_df is None and diff_df is None:
+                stats_df = stats
+                diff_df = diff
+                continue
             # Otherwise, append individual dataframe
+            diff_df = diff_df.append (diff, ignore_index=True)
             for dtype, maindf in stats_df.items():
                 stats_df[dtype] = maindf.append (stats[dtype], ignore_index=True)
             
@@ -938,11 +1002,14 @@ class data_cleaner (object):
                                self._validation_stats_df.append (stats_df['validation'], ignore_index=True)
         self._test_stats_df = stats_df['test'] if self._test_stats_df is None else \
                                self._test_stats_df.append (stats_df['test'], ignore_index=True)
+        self._diff_stats_df = diff_df if self._diff_stats_df is None else \
+                               self._diff_stats_df.append (diff_df, ignore_index=True)
 
         ## Make sure there are no duplicated stations
         self._train_stats_df      = self._train_stats_df.drop_duplicates()
         self._validation_stats_df = self._validation_stats_df.drop_duplicates()
         self._test_stats_df       = self._test_stats_df.drop_duplicates()
+        self._diff_stats_df       = self._diff_stats_df.drop_duplicates()
 
         ## If asked to create mid-step files, save and plot stats data!
         if self.create_midstep_files:
@@ -962,3 +1029,6 @@ class data_cleaner (object):
 
         ## Write testing stats
         self._dump_file ('test_stats', 'test_stats', self._test_stats_df)
+
+        ## Write diff stats
+        self._dump_file ('diff_stats', 'diff_stats', self._diff_stats_df)        
