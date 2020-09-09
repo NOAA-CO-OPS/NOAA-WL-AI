@@ -163,15 +163,10 @@ if __name__ == '__main__':
     cleaner.load_station_info()
     
     ## Clean all stations
-    #  1. Default way: use info sheet for SENSOR_USED_PRIMARY, and
-    #                  include nan VER_WL_VALUE_MSL in counting spikes
-    cleaner.clean_stations (use_VER_SENSOR_ID=False, exclude_nan_VER=False)
-    #  2. use info sheet for SENSOR_USED_PRIMARY, and
-    #     EXCLUDE nan VER_WL_VALUE_MSL in counting spikes
-    #cleaner.clean_stations (use_VER_SENSOR_ID=False, exclude_nan_VER=True)
-    #  3. use VER_WL_SENSOR_ID to define SENSOR_USED_PRIMARY, and
-    #     EXCLUDE nan VER_WL_VALUE_MSL in counting spikes
-    #cleaner.clean_stations (use_VER_SENSOR_ID=True, exclude_nan_VER=True)
+    #  1. Default way: include nan VER_WL_VALUE_MSL in counting spikes
+    cleaner.clean_stations (exclude_nan_verified=False)
+    #  2. EXCLUDE nan VER_WL_VALUE_MSL in counting spikes
+    #cleaner.clean_stations (exclude_nan_verified=True)
 
     ## Save stats data (if not already) and print out a summary
     cleaner.save_stats_data()

@@ -2,29 +2,47 @@
 
 ## By Elim Thompson (09/02/2020)
 ##
-## This script defines a data_cleaner class for Greg's WL-AI project. This primary goal of this
-## class is to clean raw station data extracted from the database by Armin. The cleaning procedure
-## is based on Greg Dusek's clean.ipynb. Additional requirements are included in the doc:
+## This script defines a data_cleaner class that manages the cleaning process
+## on all available stations. These stations are listed on the WL-AI Station
+## List (i.e. station info sheet):
+##  https://docs.google.com/spreadsheets/d/1tLoaNPWNnHneWOZlpS38S7ldlkSs0wiCq_E6_39u_Qg/edit?usp=sharing
+## 
+## This class is used by clean_data.py script which performs cleaning on all
+## stations. Please visit that script first before reading through this one.
 ##
-## https://docs.google.com/document/d/1BfyIQE9GXPCRbBSkyurd3UeGqpGkAr1UYkMZzh5LBNk/edit?usp=sharing
+## Prior calling data_cleaner.py, the following information must be set
+##  * Download the latest WL-AI Station List from the URL above. This file
+##    must be stored as CSV file. The full path and filename will be parsed
+##    as station_info_csv in this class.
+##  * Copy Armin's raw file from CO-OPS Common ..
+##      N:\CO-OPS_Common\CODE\AI-data-retrieval\data
+##    to your local desktop. Unzip all files to a location. This folder
+##    location should be parsed as raw_path in this class.
+##    NOTE: the raw_ver_merged_wl.csv, offsets.csv, and B1_gain_offsets.csv
+##          must all be located in the same folder
 ##
-## If asked, this class will also generate statistics and create plots to get a brief look at the
-## raw data.
+## Example snippet to use data_cleaner class
+## +------------------------------------------------------------------
+## # Initialize a new data cleaner 
+## cleaner = data_cleaner.data_cleaner()
 ##
-## Example snippet to use the station class:
-## +-------------------------------------------------------------
-## # Import station class
-## import station, pandas
+## # Set up the cleaner using input arguments
+## cleaner.raw_path = 'C:/path/to/Armin/unzipped/raw/files/'
+## cleaner.proc_path = 'C:/path/to/store/processed/files/'
+## cleaner.station_info_csv = 'C:/location/of/station_info_sheet.csv'
+## cleaner.create_midstep_files = True
 ##
-## This script defines a data_cleaner class for Greg's WL-AI project. This primary goal of this
-## class is to clean raw station data extracted from the database by Armin. The cleaning procedure
-## is based on Greg Dusek's clean.ipynb. Additional requirements are included in the doc:
+## # Load station info
+## cleaner.load_station_info()
+##    
+## # Clean all stations
+## cleaner.clean_stations ()
 ##
-## https://docs.google.com/document/d/1BfyIQE9GXPCRbBSkyurd3UeGqpGkAr1UYkMZzh5LBNk/edit?usp=sharing
+## # Save stats data (if not already) 
+## cleaner.save_stats_data()
+## +------------------------------------------------------------------
 ##
-## If asked, this class will also generate statistics and create plots to get a brief look at the
-## raw data.
-######################################################################################################
+#############################################################################
 
 ###############################################
 ## Import libraries
@@ -46,7 +64,7 @@ plt.rc ('font', serif='Computer Modern Roman')
 ###############################################
 ## Define constants
 ###############################################
-# Final columns to be included 
+# Final columns to be included in the same exact order
 CLEANED_COLUMNS = station.CLEANED_COLUMNS
 # Additional columns related to neighbor info
 NEIGHBOR_COLUMNS = ['NEIGHBOR_PRIMARY', 'NEIGHBOR_PREDICTION',
@@ -64,36 +82,42 @@ DATASET_TYPES = station.DATASET_TYPES
 TRAIN_END_DATE = "2016-12-31"
 VALID_START_DATE, VALID_END_DATE = "2017-01-01", "2018-12-31"
 TEST_START_DATE = "2019-01-01"
+
+# Columns in stats csv files
 CLEAN_STATS_KEYS = station.CLEAN_STATS_KEYS
 
-###############################################
-## Define functions
-###############################################
-# Short function to pull all station IDs from available raw CSV files.
-get_periods = lambda aString: numpy.array ([pandas.to_datetime (adate.strip ()) for adate in aString.split ('to')])
-get_primaries = lambda df: df[df.SENSOR_USED_PRIMARY + '_WL_VALUE_MSL']
-get_primary_sigmas = lambda df: df[df.SENSOR_USED_PRIMARY + '_WL_SIGMA']
+# Number of randomly sampled data in Greg's AI model when training
+N_RANDOM_SAMPLES = 200000
 
 ###############################################
 ## Define data_cleaner class
 ###############################################
 class data_cleaner (object):
 
+    ''' This class manages cleaning processes of multiple stations '''
+
     def __init__ (self):
 
+        ''' To initialize a new data_cleaner class '''
+
+        ## File paths and locations
         self._raw_path  = None
         self._proc_path = None
         self._station_info_csv = None 
 
+        ## Station data
         self._station_groups = None
         self._station_info = None
 
+        ## Dump mid-step files to processed folder?
         self._create_midstep_files = False
 
+        ## Cleaning stats from all stations
         self._train_stats_df = None
         self._validation_stats_df = None
         self._test_stats_df = None
 
+        ## Logger
         self._logger = logging.getLogger ('data_cleaner')
         self._logger.info ('Data cleaner instance is created.')
 
@@ -101,9 +125,29 @@ class data_cleaner (object):
     # | Getters & setters
     # +------------------------------------------------------------
     @property
+    def station_info (self): return self._station_info
+
+    @property
+    def station_groups (self): return self._station_groups
+
+    @property
+    def station_ids (self):
+        return numpy.array ([sid for slist in self.station_groups for sid in slist])
+
+    @property
+    def train_stats (self): return self._train_stats_df
+
+    @property
+    def validation_stats (self): return self._validation_stats_df
+
+    @property
+    def test_stats (self): return self._test_stats_df
+
+    @property
     def raw_path (self): return self._raw_path
     @raw_path.setter
     def raw_path (self, apath):
+        ## Make sure input path exists
         self._check_file_path_existence (apath)
         self._logger.info ('Raw data folder is set to {0}.'.format (apath))
         self._raw_path = apath
@@ -112,6 +156,7 @@ class data_cleaner (object):
     def proc_path (self): return self._proc_path
     @proc_path.setter
     def proc_path (self, apath):
+        ## Make sure input path exists
         self._check_file_path_existence (apath)
         self._logger.info ('Processed data folder is set to {0}.'.format (apath))
         self._proc_path = apath
@@ -120,6 +165,7 @@ class data_cleaner (object):
     def station_info_csv (self): return self._station_info_csv
     @station_info_csv.setter
     def station_info_csv (self, afile):
+        ## Make sure input file exists
         self._check_file_path_existence (afile)
         self._logger.info ('Station info sheet is set to {0}.'.format (afile))
         self._station_info_csv = afile
@@ -134,37 +180,22 @@ class data_cleaner (object):
             raise IOError (message)
         self._create_midstep_files = aBoolean
 
-    @property
-    def station_ids (self): return numpy.array ([sid for slist in self._station_groups for sid in slist])
-
-    @property
-    def station_info (self): return self._station_info
-
-    @property
-    def train_stats (self): return self._train_stats_df
-
-    @property
-    def validation_stats (self): return self._validation_stats_df
-
-    @property
-    def test_stats (self): return self._test_stats_df
-
     # +------------------------------------------------------------
-    # | Misc validation functions
+    # | Misc functions
     # +------------------------------------------------------------
-    def _check_file_path_existence (self, afilepath):
-        if not os.path.exists (afilepath):
-            message = 'Path or file, {0}, does not exist!'.format (afilepath)
-            self._logger.fatal (message)
-            raise FileNotFoundError (message)
-
-    def _null_values_found (self, column_name, series):
-        if series.isna().any():
-            self._logger.fatal ('Column, {0}, in station info csv contains null value.'.format (column_name))
-            raise IOError ('Column, {0}, in station info csv contains null value.\n' + 
-                           'Please fill in all cells in that column in {1}.'.format (column_name, self._station_info_csv))
-
     def _dump_file (self, dataname, filebasename, dataframe):
+
+        ''' A private function to dump a mid-step dataframe into a csv file.
+            So far, this function is only used to write out the backup gain and
+            offset dataframe. But this function can be used for other future
+            dataframes.
+
+            input params
+            ------------
+            dataname (str): Variable name of the dataframe to be written
+            filebasename (str): Base name of the output file
+            dataframe (pandas.DataFrame): Dataframe to be written out
+        '''
 
         ## Make sure proc path is already set
         if self._proc_path is None:
@@ -174,31 +205,75 @@ class data_cleaner (object):
 
         ## Make sure the input dataframe is valid
         if dataframe is None:
-            message = 'Input {0} dataframe is None. Nothing to write.'.format (dataname)
-            self._logger.debug (message)
+            message = 'Input {0} dataframe is None. Nothing to write.'
+            self._logger.debug (message.format (dataname))
             return
         if not isinstance (dataframe, pandas.core.frame.DataFrame):
-            message = 'Input {0} dataframe is not a pandas dataframe. '.format (dataname) + \
+            message = 'Input {0} dataframe is not a pandas dataframe. ' + \
                       'Only pandas dataframe can be written.'
-            self._logger.debug (message)
+            self._logger.debug (message.format (dataname))
             return
 
         ## Write the dataframe to a csv file!
         filename = self._proc_path + '/' + filebasename + '.csv'
         dataframe.to_csv (filename, index=False)
-        self._logger.info ('{0} dataframe is written to {1}.'.format (dataname, filename))
+        message = '{0} dataframe is written to {1}.'.format (dataname, filename)
+        self._logger.info (message)
+
+    def _check_file_path_existence (self, afilepath):
+
+        ''' A private function to check if an input file path exists. If it
+            doesn't a FileNotFoundError is raised.
+            
+            input param
+            -----------
+            afilepath (str): A folder to be checked
+        '''
+
+        if not os.path.exists (afilepath):
+            message = 'Path or file, {0}, does not exist!'.format (afilepath)
+            self._logger.fatal (message)
+            raise FileNotFoundError (message)
+
+    def _null_values_found (self, column_name, series):
+
+        ''' A private function to check if there is any null value in a column
+            of a dataframe. If there is, an IOError is thrown. 
+
+            input params
+            ------------
+            column_name (str): Name of the column to be checked
+            series (pandas.core.series.Series): column to be checked
+        '''
+
+        if series.isna().any():
+
+            message = 'Column, {0}, in station info csv contains null value.'
+            self._logger.fatal (message.format (column_name))
+
+            message += '\nPlease fill in all cells in that column in {1}.'
+            raise IOError (message.format (column_name, self._station_info_csv))
 
     # +------------------------------------------------------------
     # | Plotting functions
     # +------------------------------------------------------------
     def _extract_global_stats_per_set (self, dtype):
 
+        ''' A private function to extract out the counts per station for a
+            given dataset.
+
+            input params
+            ------------
+            dtype (str): name of dataset type where data is extracted
+        '''
+
         ## Get the stats df based on input dataset type
         stats_df = getattr (self, '_' + dtype + '_stats_df')
 
-        ## Extract the columns for global stats. Note that the 'n_total' in each stats
-        ## dataframe is the total number of records per set i.e. not the total number per station.
-        subframe = stats_df.loc[:, ['station_id', 'n_total', 'n_with_primary_sensor', 'n_with_other_primary_sensor']]
+        ## Extract the columns 'station_id' and 'n_total' in each stats
+        ## dataframe is the total number of records per set i.e. not the
+        ## total number per station.
+        subframe = stats_df.loc[:, ['station_id', 'n_total']]
 
         ## Re-format dataframe before adding more stats sets.
         subframe.index = subframe.station_id
@@ -209,24 +284,40 @@ class data_cleaner (object):
 
     def _extract_global_stats (self):
 
+        ''' A private function to combine train/valid/test dataframes and
+            select out the counts per station per set.
+        '''
+
         ## Collect the stats columns to be plotted
         statsframe = None
+
+        ## Loop through each dataset type 
         for dtype in DATASET_TYPES:
+            # Collect the counts for this dataset type
             subframe = self._extract_global_stats_per_set (dtype)
-            # If this dataset type is the first one, replace statsframe with this frame
+            # If this dataset type is the first one
+            # replace statsframe with this frame
             if statsframe is None: 
-                statsframe = subframe
-                continue
-            #  If not the first dataset type, merge to the existing one
-            statsframe = pandas.merge (statsframe, subframe, right_index=True, left_index=True, how='outer')
-        #  Add in the column of total # records 
-        statsframe['n_total'] = statsframe.n_total_train + statsframe.n_total_validation + statsframe.n_total_test
+                statsframe = subframe; continue
+            # If not the first dataset type, merge to the existing one.
+            statsframe = pandas.merge (statsframe, subframe, right_index=True,
+                                       left_index=True, how='outer')
+
+        ## Add in the column of total # records 
+        statsframe['n_total'] = statsframe.n_total_train + \
+                                statsframe.n_total_validation + \
+                                statsframe.n_total_test
 
         return statsframe
 
     def plot_global_stats (self):
         
-        ## Gather dataframe with global stats wthat 
+        ''' A public function to plot global stats.
+                * Top: # records per station
+                # Bottom: % of train/valid/test per station
+        '''
+
+        ## Gather dataframe with record counts per set
         statsframe = self._extract_global_stats()
 
         ## Start plotting!
@@ -234,8 +325,28 @@ class data_cleaner (object):
         gs = gridspec.GridSpec (2, 1, wspace=0.1)
         gs.update (bottom=0.15)
 
-        ## Top plot: # records per set w.r.t. # total records
+        ## Top plot: # total records per station
         axis = h.add_subplot (gs[0])
+        xvalues = numpy.arange (len (statsframe))
+        yvalues = statsframe['n_total'].values / 1000000 # counts in million
+        axis.scatter (xvalues, yvalues, marker='o', color='black', s=20, alpha=0.8)
+            
+        ##  Format x-axis
+        axis.set_xlim ([min(xvalues)-1, max(xvalues)+1])
+        axis.set_xticks (xvalues)
+        axis.get_xaxis ().set_ticklabels ([])
+        ##  Format y-axis
+        axis.set_ylim ([0.8, 1.2])
+        axis.tick_params (axis='y', labelsize=8)
+        axis.set_ylabel ('# total [million]', fontsize=8)       
+        ##  Plot grid lines
+        for ytick in axis.yaxis.get_majorticklocs():
+            axis.axhline (y=ytick, color='gray', alpha=0.3, linestyle=':', linewidth=0.2)
+        for xtick in axis.xaxis.get_majorticklocs():
+            axis.axvline (x=xtick, color='gray', alpha=0.3, linestyle=':', linewidth=0.2)
+
+        ## Bottom plot: # total per set / # total records
+        axis = h.add_subplot (gs[1])
         xvalues = numpy.arange (len (statsframe))
         for dtype in DATASET_TYPES:
             color = 'black' if dtype=='train' else 'blue' if dtype=='validation' else 'red'
@@ -246,7 +357,8 @@ class data_cleaner (object):
         ##  Format x-axis
         axis.set_xlim ([min(xvalues)-1, max(xvalues)+1])
         axis.set_xticks (xvalues)
-        axis.get_xaxis ().set_ticklabels ([])
+        axis.set_xticklabels (statsframe.index)
+        axis.tick_params (axis='x', labelsize=8, labelrotation=90)
         ##  Format y-axis
         axis.set_ylim ([0, 1])
         axis.tick_params (axis='y', labelsize=8)
@@ -259,68 +371,56 @@ class data_cleaner (object):
         ##  Plot legend
         axis.legend (loc=0, fontsize=8)        
 
-        ## Bottom plot: % of sensor types w.r.t. # records per set
-        axis = h.add_subplot (gs[1])
-        xvalues = numpy.arange (len (statsframe))
-        for dtype in DATASET_TYPES:
-            xoffset = -0.25 if dtype=='train' else +0.25 if dtype=='test' else 0.0
-            for btype in ['n_with_primary_sensor', 'n_with_other_primary_sensor']:
-                color = '#f093a2' if btype=='n_with_primary_sensor' else '#35a8e4'
-                label = 'primary sensor'  if btype=='n_with_primary_sensor' else 'other primary sensor'
-                bottom = 0 if btype=='n_with_primary_sensor' else yvalues
-                yvalues = statsframe[btype + '_' + dtype].values / statsframe['n_total_' + dtype]
-                axis.bar (xvalues + xoffset, yvalues, 0.15, label=label, bottom=bottom, color=color)
-
-        ##  Format x-axis
-        axis.set_xlim ([min(xvalues)-1, max(xvalues)+1])
-        axis.set_xticks (xvalues)
-        axis.set_xticklabels (statsframe.index)
-        axis.tick_params (axis='x', labelsize=8, labelrotation=90)
-        ##  Format y-axis
-        axis.set_ylim ([0, 1])
-        axis.tick_params (axis='y', labelsize=8)
-        axis.set_ylabel ('# primary sensors / # per set', fontsize=8)       
-        ##  Plot grid lines
-        for ytick in axis.yaxis.get_majorticklocs():
-            axis.axhline (y=ytick, color='gray', alpha=0.3, linestyle=':', linewidth=0.2)
-        for xtick in axis.xaxis.get_majorticklocs():
-            axis.axvline (x=xtick, color='gray', alpha=0.3, linestyle=':', linewidth=0.2)
-
         ### Store plot as PDF
         plt.suptitle ('Global statistics', fontsize=15)
         h.savefig (self._proc_path + '/global_stats.pdf')
         plt.close ('all')
         return
 
-    def _plot_subplot_nan_capped_vs_n_spikes (self, axis, stats_groups, stats_df, key, doLegend=False):
+    def _plot_subplot_nan_capped_vs_n_spikes (self, axis, stats_groups, stats_df,
+                                              key, reference, doLegend=False):
 
-        #  Plot scatter plot: x = log10 (n_spikes), y = log10 (key)
-        for group in stats_groups.groups.keys():
-            color = 'red' if group==False else 'green'
-            marker = 'o' if group==False else 'x' 
-            label = 'has good results' if group==False else 'has bad results'
+        ''' A private function to plot sub-plot for nan / capped vs spikes %
+            correlation plot for a given dataset type. 
+
+            input params
+            ------------
+            axis (matplotlib.Axes): the axis object to be plotted
+            stats_groups (grouped DataFrame): stats_df grouped by 'has bad results'
+            stats_df (pandas.DataFrame): stats dataframe of a given dataset type
+            key (str): the column, nan/capped primary/backup, to be plotted
+            reference (int): denominator in calculating spike percentage
+            doLegend (bool): plot legend if true
+        '''
+
+        ## Plot scatter plot: x = log10 (n_spikes), y = % spikes
+        for isbad in stats_groups.groups.keys():
+            color = 'red' if isbad else 'green'
+            marker = 'x' if isbad else 'o' 
+            label = 'bad stations' if isbad else 'good stations'
             # Define x and y values to be n_spikes and n_nan_primary
-            this_group = stats_groups.get_group (group)
+            this_group = stats_groups.get_group (isbad)
             yvalues = numpy.log10 (this_group[key])
-            xvalues = numpy.log10 (this_group.n_spikes)
-            axis.scatter (xvalues, yvalues, marker=marker, color=color, s=15, alpha=0.8, label=label)
+            xvalues = this_group.n_spikes_percent.values
+            axis.scatter (xvalues, yvalues, marker=marker, color=color,
+                          s=15, alpha=0.8, label=label)
+
         ##  Format x-axis
-        xmin = numpy.floor (min(numpy.log10 (stats_df.n_spikes)))
-        xmax = numpy.ceil (max(numpy.log10 (stats_df.n_spikes)))
+        xmin = this_group.n_spikes_percent.min() - 0.05
+        xmax = this_group.n_spikes_percent.max() + 0.05
         xticks = numpy.linspace (xmin, xmax, 6)
         axis.set_xlim ([xmin, xmax])
         axis.set_xticks (xticks)
         axis.tick_params (axis='x', labelsize=8)
-        axis.set_xlabel ('Number of spikes', fontsize=10)
+        axis.set_xlabel ('# spikes / {0}'.format (reference), fontsize=10)
         ##  Format y-axis
         ymin = numpy.floor (max (0, min(numpy.log10 (stats_df[key]))))
         ymax = numpy.ceil (max(numpy.log10 (stats_df[key])))
-        print (ymin, ymax)
         yticks = numpy.linspace (ymin, ymax, 6)        
         axis.set_ylim ([ymin, ymax])
         axis.set_yticks (yticks)
         axis.tick_params (axis='y', labelsize=8)
-        ylabel = 'Number of '
+        ylabel = 'Log10 # of '
         ylabel += 'nan ' if 'nan' in key else 'capped '
         ylabel += 'primary' if 'primary' in key else 'backup'
         axis.set_ylabel (ylabel, fontsize=10)
@@ -334,81 +434,168 @@ class data_cleaner (object):
 
     def plot_nan_capped_vs_n_spikes (self, dtype):
 
+        ''' A public function to plot correlation between of # nan & capped
+            values vs spikes % for a given dataset type in log-log scale. The
+            stations are grouped by "good" vs "bad" where bad stations are
+            those labelled as 'problematic' from station info sheet.
+
+            Top left    : log10 (# nan primary) vs % spikes
+            Top right   : log10 (# nan backup) vs % spikes
+            Bottom left : log10 (# capped primary) vs % spikes
+            Bottom right: log10 (# capped backup) vs % spikes
+
+            input params
+            ------------
+            dtype (str): name of dataset type to be plotted
+        '''
+
         ## Collect this stats df and group the stations by has_bad_results
         stats_df = getattr (self, '_' + dtype + '_stats_df')
-        ## Move capped max / min into 1 capped column
-        stats_df['n_capped_primary'] = stats_df.n_capped_primary_min + stats_df.n_capped_primary_max         
-        stats_df['n_capped_backup']  = stats_df.n_capped_backup_min + stats_df.n_capped_backup_max 
-        ## Scale n_spikes w.r.t. # records in this set
-        stats_df['n_spikes_percent'] = stats_df.n_spikes / 200000
-        ## Group dataframe by bad / good stations
+        #  Move capped max / min into 1 capped column
+        stats_df['n_capped_primary'] = stats_df.n_capped_primary_min + \
+                                       stats_df.n_capped_primary_max         
+        stats_df['n_capped_backup']  = stats_df.n_capped_backup_min + \
+                                       stats_df.n_capped_backup_max 
+        #  Scale n_spikes w.r.t. # records in this set
+        reference = N_RANDOM_SAMPLES if dtype=='train' else stats_df.n_total
+        stats_df['n_spikes_percent'] = stats_df.n_spikes / reference
+        #  Group dataframe by bad / good stations
         stats_groups = stats_df.groupby (by = 'has_bad_results')
         
         ## Start plotting!
         h = plt.figure (figsize=(9, 9))
         gs = gridspec.GridSpec (2, 2, wspace=0.2, hspace=0.2)
-        #gs.update (bottom=0.15)
 
-        ## Top left plot: # nan primary vs # spikes
+        ## Top left plot: log10 (# nan primary) vs % spikes
         axis = h.add_subplot (gs[0])
-        self._plot_subplot_nan_capped_vs_n_spikes (axis, stats_groups, stats_df, 'n_nan_primary', doLegend=True)
+        self._plot_subplot_nan_capped_vs_n_spikes (axis, stats_groups, stats_df,
+                                                   'n_nan_primary', reference,
+                                                   doLegend=True)
 
-        ## Top right plot: # nan backup vs # spikes
+        ## Top right plot: log10 (# nan backup) vs % spikes
         axis = h.add_subplot (gs[1])
-        self._plot_subplot_nan_capped_vs_n_spikes (axis, stats_groups, stats_df, 'n_nan_backup', doLegend=False)
+        self._plot_subplot_nan_capped_vs_n_spikes (axis, stats_groups, stats_df,
+                                                   'n_nan_backup', reference,
+                                                   doLegend=False)
 
-        ## Bottom left plot: # capped primary vs # spikes
+        ## Bottom left plot: log10 (# capped primary) vs % spikes
         axis = h.add_subplot (gs[2])
-        self._plot_subplot_nan_capped_vs_n_spikes (axis, stats_groups, stats_df, 'n_capped_primary', doLegend=False)
+        self._plot_subplot_nan_capped_vs_n_spikes (axis, stats_groups, stats_df,
+                                                   'n_capped_primary', reference,
+                                                   doLegend=False)
         
-        ## Bottom right plot: # capped backup vs # spikes
+        ## Bottom right plot: log10 (# capped backup) vs % spikes
         axis = h.add_subplot (gs[3])
-        self._plot_subplot_nan_capped_vs_n_spikes (axis, stats_groups, stats_df, 'n_capped_backup', doLegend=False)        
+        self._plot_subplot_nan_capped_vs_n_spikes (axis, stats_groups, stats_df,
+                                                   'n_capped_backup', reference,
+                                                   doLegend=False)        
 
         ### Store plot as PDF
-        plt.suptitle ('Nan / capped vs Spikes correlation', fontsize=15)
-        h.savefig (self._proc_path + '/nan_capped_vs_spikes.pdf')
+        title = 'Nan / capped vs spikes % correlation for {0} set'.format (dtype)
+        plt.suptitle (title, fontsize=15)
+        h.savefig (self._proc_path + '/nan_capped_vs_spikes_' + dtype + '.pdf')
         plt.close ('all')
         return        
 
     def plot_stats (self, dtype):
     
-        ## Make sure the data type is recognizable i.e. train, validation, and test
+        ''' A public function to plot the statistics info of a dataset type.
+                * global_stats: Total # records and % per set
+                * nan_capped_vs_spikes: corr of # nan & capped values vs # spikes
+
+            input params
+            ------------
+            dtype (str): name of dataset type to be plotted
+        '''
+
+        ## Make sure the input dataset type name is recognizable
+        ## i.e. train, validation, and test
         if dtype not in DATASET_TYPES:
             message = 'Invalid dataset type, {0}, is provided.'.format (dtype)
             self._logger.fatal (message)
-            raise IOError (message + '\nPlease provide one of the followings: {0}'.format (DATASET_TYPES))
+            message += '\nPlease provide one of the followings: {0}'
+            raise IOError (message.format (DATASET_TYPES))
 
-        ## Plot global stats - number of records per set 
+        ## Plot global stats - total number of records & % per set
         self.plot_global_stats()
 
         ## Plot correlations of nan and capped data points with spikes per set
         self.plot_nan_capped_vs_n_spikes (dtype)
+
+    def plot_all_stats (self):
+
+        ''' A public function to plot the statistics info of all dataset types.
+                * global_stats: Total # records and % per set
+                * nan_capped_vs_spikes: corr of # nan & capped values vs # spikes
+                                        for each datatype set
+        '''
+
+        ## Plot global stats - total number of records & % per set
+        self.plot_global_stats()
+
+        ## Plot correlations of nan and capped data points with spikes per set
+        for dtype in DATASET_TYPES:
+            self.plot_nan_capped_vs_n_spikes (dtype)
 
     # +------------------------------------------------------------
     # | Handle station list and data from station info csv
     # +------------------------------------------------------------
     def _redefine_begin_end_date (self, dates, all_begin, all_end):
 
-        # Check if this date is before end date
-        dates_before_allend = pandas.to_datetime (dates) <=  pandas.to_datetime (all_end)
+        ''' A private function to redefines the dates of all stations if needed.
+            For any dates before the all_begin dates (i.e. the start of downloaded
+            time-series), the dates are re-defined to be the start of time-series.
+            For any dates after the all_end dates (i.e. the end of downloaded
+            time-series), the dates are re-defined to be the end of time-series.
+
+            input params
+            ------------
+            dates (numpy.array): each element is either a begin or end date of a
+                                station for either train, test, or validation set
+            all_begin (numpy.array): each element is the download begin date
+            all_end (numpy.array): each element is the download end date
+
+            return params
+            -------------
+            dates (numpy.array): redefined begin / end date for a set of a stat-
+                                 ion for either train, test, or validation set
+        '''
+
+        ## Check if this date is before end date
+        dates_before_allend = pandas.to_datetime (dates) <= pandas.to_datetime (all_end)
         dates[~dates_before_allend] = all_end[~dates_before_allend]
 
-        # Check if this date is after begin date
-        dates_after_allbegin = pandas.to_datetime (dates) >=  pandas.to_datetime (all_begin)
+        ## Check if this date is after begin date
+        dates_after_allbegin = pandas.to_datetime (dates) >= pandas.to_datetime (all_begin)
         dates[~dates_after_allbegin] = all_begin[~dates_after_allbegin]
         return dates
 
     def _read_station_info (self):
 
-        ## Same for station list csv file
-        if self._station_info_csv is None:
-            self._logger.fatal ('Station info sheet is undefined.')
-            raise FileNotFoundError ('Station info CSV file is undefined. ' + 
-                                     'Please set it via `cleaner.stationInfoCSV = "/To/station/file.csv"`')  
+        ''' A private function to read station info sheet as a dataframe. In
+            doing so, the periods of training / validation / testing sets are
+            determined. 
+                * Training  : from dataset start date to 2016-12-31
+                * Validation: from 2017-01-01 to 2018-12-31
+                * Testing   : from 2019-01-01 to dataset end date
+            These dates are fixed. If the datasets have less data, they will
+            just have shorter / no validation or testing sets.
 
-        ## Load all stations from info sheet - first 3 rows are title, color index, and blank row
-        #  Avoid renaming columns because new columns may be added in the future
+            return params
+            -------------
+            station_frame (pandas.DataFrame): station meta-data from info sheet
+        '''
+
+        ## Make sure station info csv is defined
+        if self._station_info_csv is None:
+            message = 'Station info sheet is undefined.'
+            self._logger.fatal (message)
+            message += 'Please set it via `cleaner.stationInfoCSV = "/To/station/file.csv"`'
+            raise FileNotFoundError (message)  
+
+        ## Load all stations from info sheet - first 3 rows are title, color
+        #  index, and blank row. Avoid renaming columns because new columns may
+        #  be added in the future.
         station_frame = pandas.read_csv (self._station_info_csv, skiprows=3)
         n_stations = len (station_frame)
         
@@ -418,7 +605,7 @@ class data_cleaner (object):
         all_begin = full_periods.apply (lambda x: x.split (' ')[0])
         all_end   = full_periods.apply (lambda x: x.split (' ')[2])
 
-        ## Replace training / validation / testing dates (if empty cells)
+        ## Replace training / validation / testing dates 
         for dtype in DATASET_TYPES:
             # Define default begin / end dates of this type
             begin = all_begin.values if dtype=='train' else \
@@ -430,77 +617,149 @@ class data_cleaner (object):
             # Make sure begin & end dates are within downloaded range
             begin = self._redefine_begin_end_date (numpy.array (begin), all_begin, all_end)
             end   = self._redefine_begin_end_date (numpy.array (end)  , all_begin, all_end)
-            # Redefine data set date period. If begin date is the same as end date, not enough data i.e. NaN
-            period = [numpy.NaN if begin[index]==end[index] else begin[index] + ' to ' + end[index] for index in range (len (end))]
-            column_suffix = 'training' if dtype=='train' else 'testing' if dtype=='test' else 'Validation' 
+            # Redefine data set date period. If begin date is the same as end
+            # date, not enough data i.e. NaN
+            period = [numpy.NaN if begin[index]==end[index] else
+                      begin[index] + ' to ' + end[index]
+                      for index in range (len (end))]
+            # Column name is the same as existing column name
+            column_suffix = 'training' if dtype=='train' else \
+                            'testing' if dtype=='test' else 'Validation' 
             station_frame['Dates used for ' + column_suffix] = period
 
         return station_frame
 
-    def _group_stations_by_neighbor (self, station_df):
+    def _group_stations_by_neighbor (self):
 
+        ''' A private function to group stations by neighbor IDs. The returned
+            value is a list. Each element is a sub-list of 2~3 station IDs that
+            are neighbors of each other. 
+
+            When asked to clean data, data_cleaner performs the cleaning in
+            groups to reduce memory usage.
+
+            return param
+            ------------
+            station_list (list): List of sub-list of neighbor stations
+        '''
+
+        ## Extract the only two columns that matter: station ID and neighbor ID
+        station_df = self._station_info.loc[:, ['Station ID', 'Neighbor station number']]
+
+        ## Initialize a holder to append station IDs
         station_list = []
+
+        ## Loop through each row in station info csv dataframe
         for index, row in station_df.iterrows():
+            # Collect the sorted list of station ID and neighbor ID
             subarray = sorted (row.values)
+            # Loop through the sub ID lists in station_list holder 
             found = False
             for index, prevarray in enumerate (station_list):
+                # If this new list already exists, nothing needs to be done.
                 if prevarray == subarray:
                     found = True; break
+                # If any one station in the new list exist, need to update the
+                # other non-existing one(s) to the station_list
                 if numpy.in1d (subarray, prevarray).any():
                     station_list[index] = list (numpy.unique (prevarray + subarray))
                     found = True; break
+            # If stations already exist in station_list, next list!
             if found: continue
+            # Otherwise, update station_list with the new list.
             station_list.append (subarray)
 
         return station_list
 
     def load_station_info (self):
 
+        ''' A public function to load station information from station info
+            sheet. This function sets 2 private variables
+                * station_info: dataframe with all station meta-data
+                * station_groups: station IDs grouped by neighboring info
+        '''
+
         ## Read stations from station csv file
-        self._station_info = self._read_station_info ()
+        self._station_info = self._read_station_info()
 
         ## Group station ID by neigbors 
-        self._station_groups = self._group_stations_by_neighbor (self._station_info.loc[:, ['Station ID', 'Neighbor station number']])
+        self._station_groups = self._group_stations_by_neighbor()
 
         ## Log - How many stations are in the station info sheet?
-        self._logger.info ('Successfully read station info sheet - {0} stations are included.'.format (len (self.station_ids)))
+        message = 'Successfully read station info sheet - {0} stations are included.'
+        self._logger.info (message.format (len (self.station_ids)))
 
     # +------------------------------------------------------------
     # | Load & clean stations by groups
     # +------------------------------------------------------------
     def _has_complete_set (self, station_id):
     
+        ''' A private function to check if all raw files are available i.e. 
+            raw data, primary offsets, and backup gain and offset files.
+
+            input params
+            ------------
+            station_id (int): station ID from which a station instance is created
+
+            return params
+            -------------
+            Boolean: If true, this station has all files.
+        '''
+
         ## 1. Check if raw csv file exists
         raw_files = numpy.array (glob (self._raw_path + '/' + station_id + FILE_PATTERN_RAW_CSV))
         if len (raw_files) == 0:
-            self._logger.warn ('Station {0} does not have {0}{1} file.'.format (station_id, FILE_PATTERN_RAW_CSV))
+            message = 'Station {0} does not have {0}{1} file.'
+            self._logger.warn (message.format (station_id, FILE_PATTERN_RAW_CSV))
             return False
         if len (raw_files) > 1:
-            self._logger.warn ('Station {0} has multiple {0}{1} files.'.format (station_id, FILE_PATTERN_RAW_CSV))        
+            message = 'Station {0} has multiple {0}{1} files.'
+            self._logger.warn (message.format (station_id, FILE_PATTERN_RAW_CSV))        
 
         ## 2. Check if primary offsets file exists
         primary_offset_files = numpy.array (glob (self._raw_path + '/' + station_id + FILE_PATTERN_PRIMARY_OFFSETS))
         if len (primary_offset_files) == 0:
-            self._logger.warn ('Station {0} does not have {0}{1} file.'.format (station_id, FILE_PATTERN_PRIMARY_OFFSETS))
+            message = 'Station {0} does not have {0}{1} file.'
+            self._logger.warn (message.format (station_id, FILE_PATTERN_PRIMARY_OFFSETS))
             return False
         if len (primary_offset_files) > 1:
-            self._logger.warn ('Station {0} has multiple {0}{1} files.'.format (station_id, FILE_PATTERN_PRIMARY_OFFSETS))
+            message = 'Station {0} has multiple {0}{1} files.'
+            self._logger.warn (message.format (station_id, FILE_PATTERN_PRIMARY_OFFSETS))
 
         ## 3. Check if backup B1 gain / offsets file exists
         backup_gain_offset_files = numpy.array (glob (self._raw_path + '/' + station_id + FILE_PATTERN_B1_GAIN_OFFSETS))
         if len (backup_gain_offset_files) == 0:
-            self._logger.warn ('Station {0} does not have {0}{1} file.'.format (station_id, FILE_PATTERN_B1_GAIN_OFFSETS))
+            message = 'Station {0} does not have {0}{1} file.'
+            self._logger.warn (message.format (station_id, FILE_PATTERN_B1_GAIN_OFFSETS))
             return False
         if len (backup_gain_offset_files) > 1:
-            self._logger.warn ('Station {0} has multiple {0}{1} files.'.format (station_id, FILE_PATTERN_B1_GAIN_OFFSETS))            
+            message = 'Station {0} has multiple {0}{1} files.'
+            self._logger.warn (message.format (station_id, FILE_PATTERN_B1_GAIN_OFFSETS))            
 
         return True
 
     def _set_up_station (self, station_id):
 
+        ''' A private function to set up a station instance for the input
+            station ID. Meta-data for this station is extracted from the
+            station info sheet and parsed to the station instance. The primary
+            offsets and backup gain / offsets are also loaded, and the raw
+            data file is also parsed to the station instance, which is then
+            returned.
+
+            input params
+            ------------
+            station_id (int): station ID from which a station instance is created
+
+            return params
+            -------------
+            astation (station): a station instance with all info set up 
+        '''
+
         ## Define new station instance
         astation = station.station (station_id)
-        # Tell it to create mid-step files as the cleaning process goes
+
+        ## Tell it to create mid-step files as the cleaning process goes
         astation.create_midstep_files = self._create_midstep_files
         astation.proc_path = self._proc_path
 
@@ -534,10 +793,19 @@ class data_cleaner (object):
 
     def _write_processed_station (self, station_id, dataframe):
         
-        # Determine the output csv processed file
+        ''' A private function to write a dataframe into 3 files based on data-
+            set type. The file name is based on station ID and the dataset type.
+
+            input params
+            ------------
+            station_id (int): Station ID of this dataframe
+            dataframe (pandas.DataFrame): cleaned data at input station ID
+        '''
+
+        ## Determine the output csv processed file
         outfilebase = '{0}/{1}_processed_ver_merged_wl'.format (self._proc_path, station_id)
 
-        # Loop through available train, validation, and test set
+        ## Loop through available train, validation, and test set
         for dtype in dataframe.setType.unique ():
             # Determine the actual file name
             outfile = outfilebase + '_' + dtype + '.csv'
@@ -547,11 +815,34 @@ class data_cleaner (object):
             subframe.to_csv (outfile, index=False)
             self._logger.info ('{0} processed file at {1}.'.format (dtype, outfile))
 
-    def _clean_station_group (self, station_group, use_VER_SENSOR_ID=False, exclude_nan_VER=False):
+    def _clean_station_group (self, station_group, exclude_nan_verified=False):
+
+        ''' A private function to clean 1 station group. These stations are
+            neighbors. This function loops through each station in the group,
+            creates a new station instance, perform the cleaning, and stores
+            the training / validation / testing stats. Their dataframes are
+            also temporarily stored.
+            
+            After all stations in the group are cleaned, each dataframe has 4
+            new columns from its neighbor stations. After collecting the neighbor
+            info, the dataframe is then written into 3 csv files based on data-
+            set type.
+
+            At the end, the stats are put into a dictionary of dataframes.
+
+            input params
+            ------------
+            station_group (list): List of station IDs that are neighbors
+            exclude_nan_verified (bool): If true, exclude nan verified from 
+                                             spikes counting
+
+            output params
+            -------------
+            stats_df (dict): {dtype: stats dataframe}
+        '''
 
         ## Define holders for cleaned dataframe and stats
-        neighbors = []
-        dataframes = {}
+        neighbors, dataframes = [], {}
         stats = {key:{subkey:[] for subkey in ['station_id'] + CLEAN_STATS_KEYS}
                  for key in DATASET_TYPES}
 
@@ -562,7 +853,7 @@ class data_cleaner (object):
             # Collect neighbor id
             neighbors.append (astation.neighbor_id)
             # Cleaned data!
-            dataframes[station_id] = astation.clean_raw_data (use_VER_SENSOR_ID=use_VER_SENSOR_ID, exclude_nan_VER=exclude_nan_VER)
+            dataframes[station_id] = astation.clean_raw_data (exclude_nan_verified=exclude_nan_verified)
             # Extract the stats from this station
             for dtype in DATASET_TYPES:
                 stats[dtype]['station_id'].append (station_id)
@@ -590,7 +881,25 @@ class data_cleaner (object):
         stats_df = {key:pandas.DataFrame (value) for key, value in stats.items()}
         return stats_df
 
-    def clean_stations (self, station_ids=None, use_VER_SENSOR_ID=False, exclude_nan_VER=False):
+    def clean_stations (self, exclude_nan_verified=False, station_ids=None):
+
+        ''' A public function to clean stations. If no station_ids provided, it
+            cleans all available station listed in station info csv file. Other-
+            wise, the requested stations (and their neighbor stations) are
+            cleaned. 
+
+            As of 2020/09/08, the counting of spikes may or may not include
+            rows where PRIMARY is valid but VER_WL_VALUE_MSL is not. So, the
+            flag exclude_nan_verified excludes those rows from spike
+            counting.
+
+            input params
+            ------------
+            exclude_nan_verified (bool): If true, exclude nan verified from 
+                                             spikes counting
+            station_ids (int or list of int): stations (and their neighbors) to
+                                              be included in cleaning
+        '''
 
         ## If station Info is not yet loaded, load it now.
         if self._station_groups is None: self.load_station_info()
@@ -604,25 +913,25 @@ class data_cleaner (object):
         ## Make sure there are at least 1 station group. If not, it means
         ## that the input station ids are not present in station info sheet.
         if len (station_groups) == 0:
-            message = 'Input station ids, {0}, are not present in station info sheet.'.format (station_ids)
-            self._logger.fatal (message)
-            raise IOError (message + ' Please check your station ids with info sheet.')
+            message = 'Input station ids, {0}, are not present in station info sheet.'
+            self._logger.fatal (message.format (station_ids))
+            message += ' Please check your station ids with info sheet.'
+            raise IOError (message.format (station_ids))
 
         ## Load data as groups to avoid memory demands. Stations are grouped
         ## by neighbor stations. 
         stats_df = None
         for station_group in station_groups:
             # Clean this group of stations
-            stats = self._clean_station_group (station_group, use_VER_SENSOR_ID=use_VER_SENSOR_ID, exclude_nan_VER=exclude_nan_VER)
+            stats = self._clean_station_group (station_group, exclude_nan_verified=exclude_nan_verified)
             # If this is the first group, just replace stats_df
             if stats_df is None:
-                stats_df = stats
-                continue
+                stats_df = stats; continue
             # Otherwise, append individual dataframe
             for dtype, maindf in stats_df.items():
                 stats_df[dtype] = maindf.append (stats[dtype], ignore_index=True)
             
-        ## Store stats_df to private variables
+        ## Store stats_df to private variables. If they already exists, append.
         self._train_stats_df = stats_df['train'] if self._train_stats_df is None else \
                                self._train_stats_df.append (stats_df['train'], ignore_index=True)
         self._validation_stats_df = stats_df['validation'] if self._validation_stats_df is None else \
@@ -631,16 +940,19 @@ class data_cleaner (object):
                                self._test_stats_df.append (stats_df['test'], ignore_index=True)
 
         ## Make sure there are no duplicated stations
-        self._train_stats_df = self._train_stats_df.drop_duplicates()
+        self._train_stats_df      = self._train_stats_df.drop_duplicates()
         self._validation_stats_df = self._validation_stats_df.drop_duplicates()
-        self._test_stats_df = self._test_stats_df.drop_duplicates()
+        self._test_stats_df       = self._test_stats_df.drop_duplicates()
 
+        ## If asked to create mid-step files, save and plot stats data!
         if self.create_midstep_files:
-            self._save_stats_data()
-            for dtype in DATASET_TYPES:
-                self.plot_stats (dtype)
+            self.save_stats_data()
+            self.plot_all_stats ()
 
     def save_stats_data (self):
+
+        ''' A public function to store stats csv file to proc_path.
+        '''
 
         ## Write training stats
         self._dump_file ('train_stats', 'train_stats', self._train_stats_df)
