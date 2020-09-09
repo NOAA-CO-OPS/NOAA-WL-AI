@@ -419,8 +419,9 @@ class data_cleaner (object):
         axis.tick_params (axis='x', labelsize=8)
         axis.set_xlabel ('# spikes / # total {0}'.format (dtype), fontsize=10)
         ##  Format y-axis
-        ymin = numpy.floor (max (0, min(numpy.log10 (stats_df[key]))))
-        ymax = numpy.ceil (max(numpy.log10 (stats_df[key])))
+        yvalues = stats_df[key][numpy.isfinite (stats_df[key])]
+        ymin = numpy.floor (max (0, min(numpy.log10 (yvalues))))
+        ymax = numpy.ceil (max(numpy.log10 (yvalues)))
         yticks = numpy.linspace (ymin, ymax, 6)        
         axis.set_ylim ([ymin, ymax])
         axis.set_yticks (yticks)
