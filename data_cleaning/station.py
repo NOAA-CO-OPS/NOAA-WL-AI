@@ -7,6 +7,9 @@
 ## Station List (i.e. station info sheet):
 ##  https://docs.google.com/spreadsheets/d/1tLoaNPWNnHneWOZlpS38S7ldlkSs0wiCq_E6_39u_Qg/edit?usp=sharing
 ## 
+## This class is internally used by data_cleaner class but can potentially used
+## standalone if one is interested in one specific station.
+## 
 ## Prior cleaning, the following information must be set
 ##  * station meta-data either from a row in the station info sheet via
 ##    set_station_info() or individually set them via setters.
@@ -107,7 +110,9 @@ CLEANED_COLUMNS = ['STATION_ID', 'DATE_TIME', 'SENSOR_USED_PRIMARY', 'PRIMARY',
 CLEAN_STATS_KEYS = ['has_bad_results', 'n_raw', 'has_repeated_raw', 'n_total',
 		            'n_with_primary_sensor', 'n_with_other_primary_sensor',
 		            'n_primary_offsets_applied', 'n_spikes', 
-                    'n_nan_primary', 'n_nan_primary_sigma', 
+                    'n_nan_verified', 'n_nan_verified_valid_primary',
+                    'n_nan_verified_nan_primary',
+                    'n_nan_primary', 'n_nan_primary_sigma',
                     'n_nan_backup', 'n_nan_backup_sigma', 
                     'n_capped_primary_max', 'n_capped_primary_min',
                     'n_capped_backup_max', 'n_capped_backup_min',
@@ -245,7 +250,7 @@ class station (object):
     def raw_file (self): return self._raw_file
     @raw_file.setter
     def raw_file (self, apath):
-        ## Make sure input path exists         
+        ## Make sure input path exists
         self._check_file_path_existence (apath)
         self._logger.info ('Raw data folder is set to {0}.'.format (apath))
         self._raw_file = apath
@@ -254,7 +259,7 @@ class station (object):
     def proc_path (self): return self._proc_path
     @proc_path.setter
     def proc_path (self, apath):
-        ## Make sure input path exists     
+        ## Make sure input path exists
         self._check_file_path_existence (apath)
         self._logger.info ('Processed data folder is set to {0}.'.format (apath))
         self._proc_path = apath
@@ -1248,41 +1253,6 @@ class station (object):
         self._set_primary_sensor_type_stats (dataframe)
         return dataframe
 
-    def _define_sensor_by_VER_SENSOR_ID (self, dataframe):
-
-        ''' A private function that define SENSOR_USED_PRIMARY by VER_WL_SENSOR_ID.
-            For any invalid or unaccepted sensor ID< they are replaced by the
-            primary type. 
-
-            As of 2020/09/07, Elim was investigating data issue and found that
-            using VER_WL_SENSOR_ID column instead of station info sheet reduces
-            the number of spikes in a dozen of stations. So, this is an
-            experimental function until a decision is made to move this forward
-            or not.
-
-            input params
-            ------------
-            dataframe (pandas.DataFrame): dataframe without SENSOR_USED_PRIMARY
-
-            output params
-            -------------
-            dataframe (pandas.DataFrame): dataframe with SENSOR_USED_PRIMARY
-        '''
-
-        ## Define primary sensor ID using VER_WL_SENSOR_ID
-        ver_wl_sensor_id = dataframe.VER_WL_SENSOR_ID.values
-
-        ## Replace any invalid / unaccepted sensor types with primary type.
-        ver_wl_sensor_id = [self._primary_type if vid not in VALID_SENSOR_TYPES
-                            else vid for vid in ver_wl_sensor_id]
-        
-        ## Define SENSOR_USED_PRIMARY
-        dataframe['SENSOR_USED_PRIMARY'] = ver_wl_sensor_id
-        
-        ## Count the number of rows with primary and other primary sensors
-        self._set_primary_sensor_type_stats (dataframe)
-        return dataframe
-
     def _apply_offsets_on_primary (self, dataframe):
         
         ''' A private function that takes the dataframe and applies offsets to
@@ -1450,7 +1420,7 @@ class station (object):
 
         return dataframe
 
-    def clean_raw_data (self, use_VER_SENSOR_ID=False, exclude_nan_VER=False):
+    def clean_raw_data (self, exclude_nan_verified=False):
 
         ''' A public function that clean raw data. This follows step 8-17 in
             https://docs.google.com/document/d/1BfyIQE9GXPCRbBSkyurd3UeGqpGkAr1UYkMZzh5LBNk/edit?usp=sharing
@@ -1478,8 +1448,7 @@ class station (object):
         ## Add SENSOR_USED_PRIMARY column from station list
         #  This is Step 8 in WL-AI Station File Requirements  
         self._logger.info ('1. Define SENSOR_USED_PRIMARY column')
-        dataframe = self._define_sensor_by_VER_SENSOR_ID (dataframe) if use_VER_SENSOR_ID else \
-                    self._define_sensor_used (dataframe)
+        dataframe = self._define_sensor_used (dataframe)
 
         ## Define PRIMARY water level based on SENSOR_USED_PRIMARY
         #  This is Step 9 in WL-AI Station File Requirements
@@ -1510,6 +1479,18 @@ class station (object):
         dataframe['VERIFIED'] = dataframe.VER_WL_VALUE_MSL
         dataframe['PREDICTION'] = dataframe.PRED_WL_VALUE_MSL
 
+        ## Count the # records
+        #    .. with invalid verified
+        self._set_stats (dataframe[dataframe.VER_WL_VALUE_MSL.isna()], 'n_nan_verified')        
+        #    .. with valid primary but nan verified
+        is_bad = numpy.logical_and (~dataframe.PRIMARY.isna(), 
+                                    dataframe.VER_WL_VALUE_MSL.isna())
+        self._set_stats (dataframe[is_bad], 'n_nan_verified_valid_primary')
+        #    .. with nan primary and nan verified
+        is_bad = numpy.logical_and (dataframe.PRIMARY.isna(), 
+                                    dataframe.VER_WL_VALUE_MSL.isna())
+        self._set_stats (dataframe[is_bad], 'n_nan_verified_nan_primary')
+
         ## Add TARGET based on target threshold between PRIMARY and VER_WL_VALUE_MSL
         #  This is Step 14 in WL-AI Station File Requirements
         self._logger.info ('7. Define TARGET with threshold value of {0} meters'.format (TARGET_THRESH))
@@ -1517,10 +1498,11 @@ class station (object):
         #  Count the number of spikes per set and in total
         is_spikes = numpy.logical_and (dataframe.TARGET==0,  ~dataframe.PRIMARY.isna())
         self._logger.info ('   {0} records are identified as target spikes'.format (len (dataframe[is_spikes])))    
-        #  Exclude those with nan VER_WL_VALUE_MSL
-        if exclude_nan_VER:
+        #  Exclude those with nan VER_WL_VALUE_MSL when counting n_spikes
+        if exclude_nan_verified:
             is_spikes = numpy.logical_and (is_spikes, ~dataframe.VER_WL_VALUE_MSL.isna())
-            self._logger.info ('   {0} records are identified as target spikes after excluding nan VER'.format (len (dataframe[is_spikes])))    
+            message = '   {0} records are identified as target spikes after excluding nan VER'
+            self._logger.info (message.format (len (dataframe[is_spikes])))    
         self._set_stats (dataframe[is_spikes], 'n_spikes')
         
 
