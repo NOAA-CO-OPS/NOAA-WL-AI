@@ -164,9 +164,9 @@ if __name__ == '__main__':
     
     ## Clean all stations
     #  1. Default way: include nan VER_WL_VALUE_MSL in counting spikes
-    #cleaner.clean_stations (exclude_nan_verified=False)
+    cleaner.clean_stations (exclude_nan_verified=False)
     #  2. EXCLUDE nan VER_WL_VALUE_MSL in counting spikes
-    cleaner.clean_stations (exclude_nan_verified=True)
+    #cleaner.clean_stations (exclude_nan_verified=True)
 
     ## Save stats data (if not already) and print out a summary
     cleaner.save_stats_data()

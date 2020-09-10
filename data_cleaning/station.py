@@ -113,7 +113,7 @@ CLEANED_COLUMNS = ['STATION_ID', 'DATE_TIME', 'SENSOR_USED_PRIMARY', 'PRIMARY',
                    'PRIMARY_TRUE', 'PRIMARY_SIGMA', 'PRIMARY_SIGMA_TRUE',
                    'PRIMARY_RESIDUAL', 'BACKUP', 'BACKUP_TRUE', 'BACKUP_SIGMA',
                    'BACKUP_SIGMA_TRUE', 'BACKUP_RESIDUAL', 'PREDICTION',
-                   'VERIFIED', 'TARGET', 'OFFSETS_APPLIED']
+                   'VERIFIED', 'TARGET', 'OFFSETS_APPLIED', 'VERIFIED_SENSOR_ID']
 
 # Keys for the cleaning summary sheet. Each set has its own summary dictionary.
 CLEAN_STATS_KEYS = ['has_bad_results', 'n_raw', 'has_repeated_raw', 'n_total',
@@ -611,7 +611,7 @@ class station (object):
 
         dmin, dmax = min (points), max (points)
         ## Build a histogram to get 2-tailed 90% values
-        hist, edge = numpy.histogram (points, bins=50)
+        hist, edge = numpy.histogram (points, bins=1000)
         cdf = numpy.cumsum (hist) / sum (hist)
         bins = edge[:-1] + (edge[1:] - edge[:-1])/2.
         icdf = interp1d (cdf, bins)
@@ -1669,6 +1669,7 @@ class station (object):
         #  This is Step 13 in WL-AI Station File Requirements
         self._logger.info ('6. Define VERIFIED & PREDICTION')
         dataframe['VERIFIED'] = dataframe.VER_WL_VALUE_MSL
+        dataframe['VERIFIED_SENSOR_ID'] = dataframe.VER_WL_SENSOR_ID
         dataframe['PREDICTION'] = dataframe.PRED_WL_VALUE_MSL
 
         ## Count the # records
@@ -1687,6 +1688,7 @@ class station (object):
         #  This is Step 14 in WL-AI Station File Requirements
         self._logger.info ('7. Define TARGET with threshold value of {0} meters'.format (TARGET_THRESH))
         dataframe['TARGET'] = ((dataframe.PRIMARY - dataframe.VER_WL_VALUE_MSL).abs() <= TARGET_THRESH).astype (int)
+        #dataframe['TARGET'] = (dataframe.VER_WL_SENSOR_ID == self._primary_type).astype (int)
         #  Count the number of spikes per set and in total
         is_spikes = numpy.logical_and (dataframe.TARGET==0,  ~dataframe.PRIMARY.isna())
         self._logger.info ('   {0} records are identified as target spikes'.format (len (dataframe[is_spikes])))    
@@ -1703,6 +1705,8 @@ class station (object):
         diff_df.columns = ['delta', 'setType']        
         if self.create_midstep_files: self.plot_diff_histogram (diff_df)
         self._diff_stats = self._get_statistics (diff_df.delta)
+        message = '   5, 50, 95 percentiles: {0:.4f}, {1:.4f}, {2:.4f}'
+        self._logger.info (message.format (self._diff_stats['lower'], self._diff_stats['mean'], self._diff_stats['upper']))    
 
         ## For PRIMARY, BACKUP, and their SIGMAs & RESIDUALs, replace all NaNs / missing
         #  entries with 0 and create dummy boolean column with _TRUE suffix in column names

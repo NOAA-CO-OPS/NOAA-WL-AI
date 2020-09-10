@@ -90,6 +90,9 @@ DIFF_STATS_KEYS = station.DIFF_STATS_KEYS
 # Number of randomly sampled data in Greg's AI model when training
 N_RANDOM_SAMPLES = 200000
 
+# TARGET threshold in meters between PRIMARY and VERIFIED
+TARGET_THRESH = station.TARGET_THRESH
+
 ###############################################
 ## Define data_cleaner class
 ###############################################
@@ -545,11 +548,10 @@ class data_cleaner (object):
         axis.errorbar (xvalues, yvalues, yerr=yerrors, marker='o', color='black',
                        markersize=6, alpha=0.7, linestyle=None, linewidth=0.0,
                        ecolor='blue', elinewidth=3, capsize=0.0, capthick=0.0)
-        yerrors = numpy.array ([yvalues - self.diff_stats['min'],
-                                self.diff_stats['max'] - yvalues])
-        axis.errorbar (xvalues, yvalues, yerr=yerrors, color='red', 
-                       marker=None, alpha=0.7, linestyle=None, linewidth=0.0,
-                       ecolor='red', elinewidth=1, capsize=0.1, capthick=0.01)
+
+        ## Plot horizontal line
+        axis.axhline (y=TARGET_THRESH, color='red', alpha=0.7, linestyle='--', linewidth=1)
+        axis.axhline (y=-1*TARGET_THRESH, color='red', alpha=0.7, linestyle='--', linewidth=1)
 
         ##  Format x-axis
         axis.set_xlim ([min(xvalues) - 1, max(xvalues) + 1])
@@ -557,8 +559,7 @@ class data_cleaner (object):
         axis.set_xticklabels (self.diff_stats.station_id)
         axis.tick_params (axis='x', labelsize=8, labelrotation=90)
         ##  Format y-axis
-        axis.set_ylim ([min (self.diff_stats['min']) - 5,
-                        max (self.diff_stats['max']) + 5])
+        axis.set_ylim ([-0.1, 0.1])
         axis.tick_params (axis='y', labelsize=8)
         axis.set_ylabel ('Primary - Verified\n[meters]', fontsize=10)
 
