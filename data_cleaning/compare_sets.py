@@ -43,6 +43,9 @@ markers = ['x', '^', 'o']
 # Percetage threshold - 10%
 PCT_THRESH = 0.1
 
+# Number of randomly sampled data in Greg's AI model when training
+N_RANDOM_SAMPLES = 200000
+
 ###############################################
 ## Define functions
 ###############################################
@@ -205,18 +208,19 @@ def plot_bad_percentage (train_stats, valid_stats, test_stats):
 
     ## Define the name / label of the 3 sets
     labels = ['_'.join (col.split('_')[2:])
-              for col in train_stats.columns if 'n_spikes' in col]
+              for col in train_stats.columns 
+              if 'n_spikes' in col and not 'percent' in col]
 
     ## Start plotting!
     h = plt.figure (figsize=(9, 9))
     gs = gridspec.GridSpec (3, 1, wspace=0.1)
     gs.update (bottom=0.15)
 
-    ## Top plot: training n_spikes w.r.t. 200000
+    ## Top plot: training n_spikes w.r.t. N_RANDOM_SAMPLES
     axis = h.add_subplot (gs[0])
     xvalues = numpy.arange (len (train_stats))
     for index, label in enumerate (labels):
-        yvalues = train_stats['n_spikes_' + label].values / 200000.
+        yvalues = train_stats['n_spikes_' + label].values / N_RANDOM_SAMPLES
         axis.scatter (xvalues, yvalues, marker=markers[index],
                       color=colors[index], s=25, alpha=0.7, label=label)
     ## Shade "good" threshold as green i.e. good stations
@@ -229,7 +233,7 @@ def plot_bad_percentage (train_stats, valid_stats, test_stats):
     ##  Format y-axis
     axis.set_ylim ([0, 0.5])
     axis.tick_params (axis='y', labelsize=8)
-    axis.set_ylabel ('# spikes in train / 200000', fontsize=8)       
+    axis.set_ylabel ('# spikes in train / {0}'.format (N_RANDOM_SAMPLES), fontsize=8)       
     ##  Plot grid lines
     for ytick in axis.yaxis.get_majorticklocs():
         axis.axhline (y=ytick, color='gray', alpha=0.3, linestyle=':', linewidth=0.2)
