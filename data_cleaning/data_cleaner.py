@@ -48,6 +48,7 @@
 ## Import libraries
 ###############################################
 import numpy, pandas, datetime, os, logging
+from scipy.interpolate import interp1d
 import _pickle as pickle
 from glob import glob
 
@@ -57,6 +58,7 @@ import matplotlib
 matplotlib.use ('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+from matplotlib.offsetbox import AnchoredText
 plt.rc ('text', usetex=False)
 plt.rc ('font', family='sans-serif')
 plt.rc ('font', serif='Computer Modern Roman')
@@ -93,6 +95,10 @@ N_RANDOM_SAMPLES = 200000
 # TARGET threshold in meters between PRIMARY and VERIFIED
 TARGET_THRESH = station.TARGET_THRESH
 
+# Settings for giant histogram with all differences
+GIANT_HIST_NBINS = station.GIANT_HIST_NBINS
+GIANT_HIST_RANGE = station.GIANT_HIST_RANGE
+
 ###############################################
 ## Define data_cleaner class
 ###############################################
@@ -120,7 +126,13 @@ class data_cleaner (object):
         self._train_stats_df = None
         self._validation_stats_df = None
         self._test_stats_df = None
+
+        ## Information related to differences between primary and verified
+        self._diff_hist_settings = {'nbins':GIANT_HIST_NBINS,
+                                    'range':GIANT_HIST_RANGE}
         self._diff_stats_df = None
+        self._diff_hist = {'edges':None, 'all':None, 'bad_only_by_thresh':None,
+                           'bad_only_by_sensor_id':None}        
 
         ## Logger
         self._logger = logging.getLogger ('data_cleaner')
@@ -242,6 +254,33 @@ class data_cleaner (object):
             message = 'Path or file, {0}, does not exist!'.format (afilepath)
             self._logger.fatal (message)
             raise FileNotFoundError (message)
+
+    def _check_is_array (self, array, length=None):
+
+        ''' A private function to check if an input array is a numpy array, a
+            list, or a tuple. If it isn't, an IOError is raised. If length is
+            provided, check if the input array has the required length.
+            
+            input param
+            -----------
+            array (anything): A value to be checked
+            length (int): Required length of the input array
+        '''
+
+        ## 1. Check if input array is a valid array type.
+        if not type (array) in station.ARRAY_TYPES:
+            message = 'Input, {0}, is not an array / list / tuple.'.format (array)
+            self._logger.fatal (message)
+            raise IOError (message)
+
+        ## Leave if no specific (integer) length required
+        if length is None: return
+        if not isinstance (length, int): return
+
+        ## 2. Check if input array has a specific length
+        if not len (array) == length:
+            message = 'Input, {0}, does not have a length of {1}.'
+            self._logger.warn (message.format (array, length))
 
     def _null_values_found (self, column_name, series):
 
@@ -576,6 +615,127 @@ class data_cleaner (object):
         plt.close ('all')
         return
 
+    def _get_diff_statistics (self, xvalues, yvalues):
+        
+        ''' A private function to obtain statistics from a histogram with
+            x and yvalues. It builds a cumulative histogram and flips (inverts)
+            it. The mean, min, max, top and bottom 5% are obtained to get a
+            rough shape of the histogram. 
+
+            lower: 5%
+            mean: 50%
+            upper: 95%
+
+            input params
+            ------------
+            xvalues (array): the xvalues for fitting a CDF
+            yvalues (array): the yvalues for fitting a CDF
+
+            return params
+            -------------
+            stats (dict): 5%, 50%, 95% from the histogram
+        '''
+        
+        cdf = numpy.cumsum (yvalues) / sum (yvalues)
+        bins = xvalues[:-1] + (xvalues[1:] - xvalues[:-1])/2.
+        icdf = interp1d (cdf, bins)
+        lowP = max (0.025, min (icdf.x))
+        highP = min (0.975, max (icdf.x))
+        midP = 0.5
+        if highP < lowP:
+            highP = (max (icdf.x) - lowP)*0.975 + lowP
+            midP = (max (icdf.x) - lowP)*0.5 + lowP
+        lower, mean, upper = icdf(lowP), icdf(midP), icdf(highP)
+        return {'lower':float (lower), 'upper':float (upper), 'mean':float (mean)}
+
+    def _plot_subplot_giant_diff (self, axis, htype='all'):
+
+        ''' A private function to plot a sub plot for the summary histogram.
+            The histogram is indicated by the htype, which must be one of the
+            3 keys in self._hist_diff: 'all', 'bad_only_by_thresh', or
+            'bad_only_by_sensor_id'. By default this histogram covers quite
+            a wide range (+/- 20 or 30 meters) with fine binning. With the full
+            range, the 90% interval is extracted. This function then plots the
+            sub-section of the histogram between -1 and 1 meters.
+
+            input params
+            ------------
+            axis (matplotlib.Axes): axis on which plots are made
+            htype (str): key in self._hist_diff
+        '''
+
+        ## Determine the 5, 50, 95%
+        yvalues = self._diff_hist[htype]
+        xvalues = self._diff_hist['edges']        
+        stats = self._get_diff_statistics (xvalues, yvalues)
+
+        ## Plot the histogram
+        yvalues = numpy.log10 (yvalues)
+        yvalues = [yvalues[0]] + list (yvalues)
+        axis.plot (xvalues, yvalues, color='gray', alpha=0.7, linestyle='-',
+                   linewidth=1.5, drawstyle='steps-pre')
+
+        ## Plot vertical shaded area between 5 and 95%
+        axis.axvspan (stats['lower'], stats['upper'], color='blue', alpha=0.2)
+
+        #  Print 90% interval
+        text = '50% = {0:.3f} cm\n'.format (stats['mean']*100)
+        text += '90% = [{0:.3f}, {1:.3f}] cm'.format (stats['lower']*100, stats['upper']*100)
+        anchored_text = AnchoredText (text, loc=2, frameon=False)
+        axis.add_artist (anchored_text)
+
+        ##  Format x-axis
+        axis.set_xlim ([-1 ,1]) ## from -1 to 1 meters
+        axis.set_xticks (numpy.linspace (-1, 1, 11))
+        axis.tick_params (axis='x', labelsize=8)
+        axis.set_xlabel ('Primary - Verified [meters]', fontsize=10)
+
+        ##  Format y-axis
+        axis.set_ylim ([0, numpy.ceil (max(yvalues))])
+        axis.tick_params (axis='y', labelsize=8)
+        axis.set_ylabel ('log10 #', fontsize=10)
+
+        ##  Add title
+        title = 'All data points' if htype=='all' else htype.replace ('_', ' ')
+        axis.set_title (title, fontsize=12)
+        ##  Plot grid lines
+        for ytick in axis.yaxis.get_majorticklocs():
+            axis.axhline (y=ytick, color='gray', alpha=0.3, linestyle=':', linewidth=0.2)
+        for xtick in axis.xaxis.get_majorticklocs():
+            axis.axvline (x=xtick, color='gray', alpha=0.3, linestyle=':', linewidth=0.2)
+
+    def plot_giant_diff_hist (self):
+
+        ''' A public function to plot summary histogram of primary - verified.
+            For each histogram, 90% interval is shaded and printed on the plot.
+
+            Right: Histogram with all points
+            Middle: Histogram with only bad points defined by threshold
+            Left: Histogram with only bad points defined by sensor ID
+        '''
+
+        ## Start plotting!
+        h = plt.figure (figsize=(17, 5.5))
+        gs = gridspec.GridSpec (1, 3)
+
+        ## Plot the histogram with all data points (log y-axis)
+        axis = h.add_subplot (gs[0])
+        self._plot_subplot_giant_diff (axis, htype='all')
+
+        ## Plot the histogram with bad points  (log y-axis)
+        axis = h.add_subplot (gs[1])
+        self._plot_subplot_giant_diff (axis, htype='bad_only_by_thresh')
+
+        ## Plot the histogram with bad points  (log y-axis)
+        axis = h.add_subplot (gs[2])
+        self._plot_subplot_giant_diff (axis, htype='bad_only_by_sensor_id')
+
+        ### Store plot as PDF
+        plt.suptitle ('Distributions of primary - verified from all stations', fontsize=12)
+        h.savefig (self.proc_path + '/diff_hist_summary.pdf')
+        plt.close ('all')
+        return
+
     def plot_all_stats (self):
 
         ''' A public function to plot the statistics info of all dataset types.
@@ -589,6 +749,7 @@ class data_cleaner (object):
 
         ## Plot diff stats - total number of records & % per set
         self.plot_diff_stats()
+        self.plot_giant_diff_hist()
 
         ## Plot correlations of nan and capped data points with spikes per set
         for dtype in DATASET_TYPES:
@@ -872,6 +1033,29 @@ class data_cleaner (object):
             subframe.to_csv (outfile, index=False)
             self._logger.info ('{0} processed file at {1}.'.format (dtype, outfile))
 
+    def _append_giant_histograms (self, diff_hist_per_station):
+
+        ''' A private function to add histogram of difference from each station
+            to the summary histogram plot.
+
+            input params
+            ------------
+            diff_hist_per_station (dict): Has the same keys as self._diff_hist
+        '''
+
+        ## Loop through each key
+        for key in self._diff_hist.keys ():
+            # Get the value of histogram from this station
+            value = numpy.array (diff_hist_per_station[key])
+            # If the private variable does not have this value, set it!
+            if self._diff_hist[key] is None:
+                self._diff_hist[key] = value
+                continue
+            ## if edges, no need to re-set it
+            if key == 'edges': continue
+            ## For other histogram, add to the existing ones to sum up histogram
+            self._diff_hist[key] += value
+
     def _clean_station_group (self, station_group, exclude_nan_verified=False):
 
         ''' A private function to clean 1 station group. These stations are
@@ -923,6 +1107,8 @@ class data_cleaner (object):
                 stats_dict = getattr (astation, dtype + '_stats')
                 for stats_key, stats_value in stats_dict.items():
                     stats[dtype][stats_key].append (stats_value)
+            # Add the histograms to the giant histograms
+            self._append_giant_histograms (astation.diff_hist)
 
         ## Handle neighbor info. The stations in the same group are related by
         ## their neighbor info. Once all of their data are cleaned, we add new
@@ -998,6 +1184,9 @@ class data_cleaner (object):
             for dtype, maindf in stats_df.items():
                 stats_df[dtype] = maindf.append (stats[dtype], ignore_index=True)
             
+        ## Plot a giant histogram with all 
+
+
         ## Store stats_df to private variables. If they already exists, append.
         self._train_stats_df = stats_df['train'] if self._train_stats_df is None else \
                                self._train_stats_df.append (stats_df['train'], ignore_index=True)

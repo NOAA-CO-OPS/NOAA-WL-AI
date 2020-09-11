@@ -149,6 +149,10 @@ NUMBER_TYPES = [float, int, numpy.float, numpy.float16, numpy.float32,
 # Possible types of array
 ARRAY_TYPES = [list, tuple, numpy.ndarray]
 
+# Settings for giant histogram with all differences
+GIANT_HIST_NBINS = 500
+GIANT_HIST_RANGE = [-20, 20]
+
 ###############################################
 ## Define lambda functions
 ###############################################
@@ -200,7 +204,13 @@ class station (object):
         self._train_stats = {key:None for key in CLEAN_STATS_KEYS}
         self._validation_stats = {key:None for key in CLEAN_STATS_KEYS}
         self._test_stats = {key:None for key in CLEAN_STATS_KEYS}
+
+        ## Information related to the difference between primary and verified
         self._diff_stats = None
+        self._diff_hist = {'edges':None, 'all':None, 'bad_only_by_thresh':None,
+                           'bad_only_by_sensor_id':None}
+        self._diff_hist_settings = {'nbins':GIANT_HIST_NBINS,
+                                    'range':GIANT_HIST_RANGE}
 
         ## Logger
         self._logger = logging.getLogger ('station {0}'.format (station_id))
@@ -254,6 +264,9 @@ class station (object):
 
     @property
     def diff_stats (self): return self._diff_stats
+
+    @property
+    def diff_hist (self): return self._diff_hist
 
     @property
     def create_midstep_files (self): return self._create_midstep_files
@@ -611,7 +624,7 @@ class station (object):
 
         dmin, dmax = min (points), max (points)
         ## Build a histogram to get 2-tailed 90% values
-        hist, edge = numpy.histogram (points, bins=1000)
+        hist, edge = numpy.histogram (points, bins=1400)
         cdf = numpy.cumsum (hist) / sum (hist)
         bins = edge[:-1] + (edge[1:] - edge[:-1])/2.
         icdf = interp1d (cdf, bins)
@@ -659,7 +672,7 @@ class station (object):
         hists = groups.apply (numpy.histogram, **params)
 
         ## Plot stacked histogram
-        reference = numpy.array ([0.] * (HIST_NBINS+1))
+        reference = numpy.array ([0.] * (HIST_NBINS+1)).astype (float)
         for dtype in DATASET_TYPES[::-1]:
             # Next dataset type if not available
             if not dtype in hists: continue
@@ -670,11 +683,12 @@ class station (object):
             yvalues = reference + numpy.log10 (hist)
             # Replace any inf / nan to 0
             yvalues[~numpy.isfinite(yvalues)] = 0
+            yvalues = yvalues.astype (float)
             # Determine the color based on dataset type
             color = '#666666' if dtype=='train' else '#489cbd' if dtype=='validation' else '#ff4f6b'
             # Plot a stack histogram
-            if reqEdges is not None: edges = reqEdges
-            axis.fill_between (edges, reference, yvalues, color=color,
+            e = edges.astype (float) if reqEdges is None else reqEdges.astype (float)
+            axis.fill_between (e.astype (float), reference, yvalues, color=color,
                                step='pre', label=dtype)
             # Update reference
             reference = yvalues
@@ -683,12 +697,11 @@ class station (object):
         if len (groups) > 1: axis.legend (loc=1, fontsize=8)
 
         ##  Format x-axis
-        edges = edges[numpy.isfinite (edges)]
+        edges = e[numpy.isfinite (e)]
         axis.set_xlim ([min (edges), max(edges)])
         axis.tick_params (axis='x', labelsize=8)
         axis.set_xlabel ('Primary - Verified [meters]', fontsize=8)    
         ##  Format y-axis
-        yvalues = yvalues[numpy.isfinite (yvalues)]
         axis.set_ylim ([numpy.floor (min (yvalues)), numpy.ceil (max (yvalues))])
         axis.tick_params (axis='y', labelsize=8)
         axis.set_ylabel ('log10 #', fontsize=8)
@@ -746,6 +759,79 @@ class station (object):
         plt.suptitle (title, fontsize=15)
         h.savefig ('{0}/{1}_diff_histogram.pdf'.format (self._proc_path, self.station_id))
         plt.close ('all')
+
+    def _store_giant_hist (self, diff_df):
+
+        ''' A private function to store histograms of differences. Note that
+            the histogram values are stored instead of the arrays of differences.
+            This is to save memory - 57 stations x over 1M records / stations
+            is a lot of data points to store!
+
+            The goal here is that... Per station, ths histogram is stored. The
+            settings (range and nbins) are set globally across all stations.
+            Then, in data_cleaner.py, the histograms are all summed up to get
+            the total histogram from all stations, from which the 90% interval
+            is obtained.
+
+            Greg is interested in 3 histograms:
+                * with all (good and bad) data points - centered at 0
+                * with bad points only where bad is defined by target threshold 
+                * with bad points only where primary ID is not the same as verified
+            They are all stored as self._diff_hist, together with the histogram
+            edges / bins.
+
+            input params
+            ------------
+            diff_df (pandas.DataFrame): data with 'delta' and 'same_as_ver_sensor_id'
+        '''
+
+        ## Build a histogram with all data points
+        points = diff_df.delta
+        hist, edges = numpy.histogram (points,
+                                    bins=self._diff_hist_settings['nbins'],
+                                    range=self._diff_hist_settings['range'])
+        self._diff_hist['all'], self._diff_hist['edges'] = hist, edges
+
+        ## Build a histogram with only bad points based on threshold
+        points = diff_df.delta [diff_df.delta.abs() > TARGET_THRESH]
+        self._diff_hist['bad_only_by_thresh'] = numpy.histogram (points,
+                                    bins=self._diff_hist_settings['nbins'],
+                                    range=self._diff_hist_settings['range'])[0]
+
+        ## Build a histogram with only bad points based on sensor ID
+        points = diff_df.delta [~diff_df.same_as_ver_sensor_id]
+        self._diff_hist['bad_only_by_sensor_id'] = numpy.histogram (points,
+                                    bins=self._diff_hist_settings['nbins'],
+                                    range=self._diff_hist_settings['range'])[0]
+
+    def _handle_primary_verified_differences (self, dataframe):
+
+        ''' A private function to handle all information related to the diff
+            between primary and verified:
+                * define the differences
+                * store the differences as self_diff
+                * generate histograms of the differences per set
+                * estimate 5%, 50%, 95% values
+
+            input params
+            ------------
+            dataframe (pandas.DataFrame): data with PRIMARY, VERIFIED, and setType
+        '''
+
+        ## Plot difference between PRIMARY and VERIFIED histogram
+        diff_df = pandas.concat ([dataframe.PRIMARY - dataframe.VERIFIED,
+                                  dataframe.SENSOR_USED_PRIMARY == dataframe.VER_WL_SENSOR_ID,
+                                  dataframe.setType], axis=1)
+        diff_df.columns = ['delta', 'same_as_ver_sensor_id', 'setType']
+        #  Plot the histogram for this station
+        if self.create_midstep_files: self.plot_diff_histogram (diff_df)
+        #  Store the histogram of differences
+        self._store_giant_hist (diff_df)
+        #  Get the percentile stats of differences
+        self._diff_stats = self._get_statistics (diff_df.delta)
+        message = '   5, 50, 95 percentiles: {0:.4f}, {1:.4f}, {2:.4f}'
+        self._logger.info (message.format (self._diff_stats['lower'],
+                           self._diff_stats['mean'], self._diff_stats['upper']))  
 
     # +------------------------------------------------------------
     # | Set station meta-data from info sheet
@@ -1688,7 +1774,6 @@ class station (object):
         #  This is Step 14 in WL-AI Station File Requirements
         self._logger.info ('7. Define TARGET with threshold value of {0} meters'.format (TARGET_THRESH))
         dataframe['TARGET'] = ((dataframe.PRIMARY - dataframe.VER_WL_VALUE_MSL).abs() <= TARGET_THRESH).astype (int)
-        #dataframe['TARGET'] = (dataframe.VER_WL_SENSOR_ID == self._primary_type).astype (int)
         #  Count the number of spikes per set and in total
         is_spikes = numpy.logical_and (dataframe.TARGET==0,  ~dataframe.PRIMARY.isna())
         self._logger.info ('   {0} records are identified as target spikes'.format (len (dataframe[is_spikes])))    
@@ -1700,13 +1785,7 @@ class station (object):
         self._set_stats (dataframe[is_spikes], 'n_spikes')
         
         ## Plot difference between PRIMARY and VERIFIED histogram
-        diff_df = pandas.concat ([dataframe.PRIMARY - dataframe.VERIFIED,
-                                  dataframe.setType], axis=1)
-        diff_df.columns = ['delta', 'setType']        
-        if self.create_midstep_files: self.plot_diff_histogram (diff_df)
-        self._diff_stats = self._get_statistics (diff_df.delta)
-        message = '   5, 50, 95 percentiles: {0:.4f}, {1:.4f}, {2:.4f}'
-        self._logger.info (message.format (self._diff_stats['lower'], self._diff_stats['mean'], self._diff_stats['upper']))    
+        self._handle_primary_verified_differences (dataframe)
 
         ## For PRIMARY, BACKUP, and their SIGMAs & RESIDUALs, replace all NaNs / missing
         #  entries with 0 and create dummy boolean column with _TRUE suffix in column names
