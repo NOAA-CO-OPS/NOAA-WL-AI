@@ -168,6 +168,11 @@ if __name__ == '__main__':
     #  2. EXCLUDE nan VER_WL_VALUE_MSL in counting spikes
     #cleaner.clean_stations (exclude_nan_verified=True)
 
+    ## Clean subset of stations. This will clean both the requested stations
+    ## and their neighbor stations.
+    #station_ids = [8418150, 8454049]
+    #cleaner.clean_stations (exclude_nan_verified=False, station_ids=station_ids)
+
     ## Save stats data (if not already) and print out a summary
     cleaner.save_stats_data()
     print_summary_stats (cleaner.train_stats, cleaner.validation_stats,
