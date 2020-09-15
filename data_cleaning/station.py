@@ -114,7 +114,7 @@ CLEANED_COLUMNS = ['STATION_ID', 'DATE_TIME', 'SENSOR_USED_PRIMARY', 'PRIMARY',
                    'PRIMARY_RESIDUAL', 'BACKUP', 'BACKUP_TRUE', 'BACKUP_SIGMA',
                    'BACKUP_SIGMA_TRUE', 'BACKUP_RESIDUAL', 'PREDICTION',
                    'VERIFIED', 'TARGET', 'OFFSETS_APPLIED', 'VERIFIED_SENSOR_ID',
-                   'PRESCALED_PRIMARY']
+                   'PRESCALED_PRIMARY', 'PRESCALED_VERIFIED']
 
 # Keys for the cleaning summary sheet. Each set has its own summary dictionary.
 CLEAN_STATS_KEYS = ['has_bad_results', 'n_raw', 'has_repeated_raw', 'n_total',
