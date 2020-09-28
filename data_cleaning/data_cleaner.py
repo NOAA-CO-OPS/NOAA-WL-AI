@@ -194,7 +194,7 @@ class data_cleaner (object):
     def create_midstep_files (self): return self._create_midstep_files
     @create_midstep_files.setter
     def create_midstep_files (self, aBoolean):
-        if not type (aBoolean) == bool:
+        if not isinstance (aBoolean, bool):
             message = 'Cannot accept a non-boolean, {0}, for create_midstep_files.'.format (aBoolean)
             self._logger.fatal (message)
             raise IOError (message)

@@ -113,7 +113,8 @@ CLEANED_COLUMNS = ['STATION_ID', 'DATE_TIME', 'SENSOR_USED_PRIMARY', 'PRIMARY',
                    'PRIMARY_TRUE', 'PRIMARY_SIGMA', 'PRIMARY_SIGMA_TRUE',
                    'PRIMARY_RESIDUAL', 'BACKUP', 'BACKUP_TRUE', 'BACKUP_SIGMA',
                    'BACKUP_SIGMA_TRUE', 'BACKUP_RESIDUAL', 'PREDICTION',
-                   'VERIFIED', 'TARGET', 'OFFSETS_APPLIED', 'VERIFIED_SENSOR_ID']
+                   'VERIFIED', 'TARGET', 'OFFSETS_APPLIED', 'VERIFIED_SENSOR_ID',
+                   'PRESCALED_PRIMARY', 'PRESCALED_VERIFIED']
 
 # Keys for the cleaning summary sheet. Each set has its own summary dictionary.
 CLEAN_STATS_KEYS = ['has_bad_results', 'n_raw', 'has_repeated_raw', 'n_total',
@@ -1678,8 +1679,8 @@ class station (object):
 
     def _scale_values (self, dataframe):
         
-        ''' A private function that scales PRIMARY, BACKUP, and PREDICTION
-            by GT range stated in the station list. 
+        ''' A private function that scales PRIMARY, VERIFIED, BACKUP, and
+            PREDICTION by GT range stated in the station list. 
 
             input params
             ------------
@@ -1693,7 +1694,7 @@ class station (object):
         # Read GT range from station csv
         self._logger.info ('    * GT range is {0}'.format (self._gt_range))
         # Scale each column
-        for key in ['PRIMARY', 'BACKUP', 'PREDICTION']:
+        for key in ['PRIMARY', 'VERIFIED', 'BACKUP', 'PREDICTION']:
             dataframe[key] = dataframe[key] / self._gt_range
 
         return dataframe
@@ -1732,6 +1733,7 @@ class station (object):
         #  This is Step 9 in WL-AI Station File Requirements
         self._logger.info ('2. Define PRIMARY water level based on SENSOR_USED_PRIMARY')
         dataframe['PRIMARY'] = dataframe.apply (get_primaries, axis=1)
+        dataframe['PRESCALED_PRIMARY'] = dataframe.apply (get_primaries, axis=1)
 
         ## Apply offsets to PRIMARY water level
         #  This is Step 10 in WL-AI Station File Requirements
@@ -1755,6 +1757,7 @@ class station (object):
         #  This is Step 13 in WL-AI Station File Requirements
         self._logger.info ('6. Define VERIFIED & PREDICTION')
         dataframe['VERIFIED'] = dataframe.VER_WL_VALUE_MSL
+        dataframe['PRESCALED_VERIFIED'] = dataframe.VER_WL_VALUE_MSL
         dataframe['VERIFIED_SENSOR_ID'] = dataframe.VER_WL_SENSOR_ID
         dataframe['PREDICTION'] = dataframe.PRED_WL_VALUE_MSL
 
@@ -1801,7 +1804,7 @@ class station (object):
 
         ## Scale PRIMARY, BACKUP, and PREDICTION by GT range
         ## This is Step 17 in WL-AI Station File Requirements
-        self._logger.info ('10. Scale PRIMARY, BACKUP, and PREDICTION by GT range.')    
+        self._logger.info ('10. Scale PRIMARY, VERIFIED, BACKUP, and PREDICTION by GT range.')    
         dataframe = self._scale_values (dataframe)
 
         # Keep columns requested in specific order
