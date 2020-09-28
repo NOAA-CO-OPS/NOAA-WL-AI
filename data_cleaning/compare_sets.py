@@ -31,10 +31,10 @@ plt.rc ('font', serif='Computer Modern Roman')
 ## Define constants
 ###############################################
 # Default output path
-out_path = 'C:/Users/elim.thompson/Documents/wl_ai/data/'
+out_path = 'C:/Users/lindsay.abrams/Documents/noaa-wl-ai/data/'
 
 # Default set 1 path
-set1_path = 'C:/Users/elim.thompson/Documents/wl_ai/data/processed/'
+set1_path = 'C:/Users/lindsay.abrams/Documents/noaa-wl-ai/processed/'
 
 # Plot styles - Up to 3 sets max
 colors  = ['black', 'blue', 'red']

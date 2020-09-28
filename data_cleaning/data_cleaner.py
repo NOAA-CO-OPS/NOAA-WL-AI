@@ -656,7 +656,7 @@ class data_cleaner (object):
             'bad_only_by_sensor_id'. By default this histogram covers quite
             a wide range (+/- 20 or 30 meters) with fine binning. With the full
             range, the 90% interval is extracted. This function then plots the
-            sub-section of the histogram between -1 and 1 meters.
+            sub-section of the histogram between -0.1 and 0.1 meters.
 
             input params
             ------------
@@ -666,7 +666,7 @@ class data_cleaner (object):
 
         ## Determine the 5, 50, 95%
         yvalues = self._diff_hist[htype]
-        xvalues = self._diff_hist['edges']        
+        xvalues = self._diff_hist['edges']     
         stats = self._get_diff_statistics (xvalues, yvalues)
 
         ## Plot the histogram
@@ -685,9 +685,9 @@ class data_cleaner (object):
         axis.add_artist (anchored_text)
 
         ##  Format x-axis
-        axis.set_xlim ([-1 ,1]) ## from -1 to 1 meters
-        axis.set_xticks (numpy.linspace (-1, 1, 11))
-        axis.tick_params (axis='x', labelsize=8)
+        axis.set_xlim ([-0.1 ,0.1]) ## from -0.1 to 0.1 meters
+        axis.set_xticks (numpy.linspace (-0.1, 0.1, 21)) # 21 xticks
+        axis.tick_params (axis='x', labelsize=6)
         axis.set_xlabel ('Primary - Verified [meters]', fontsize=10)
 
         ##  Format y-axis

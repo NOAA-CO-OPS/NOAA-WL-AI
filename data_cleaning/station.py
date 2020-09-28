@@ -106,7 +106,7 @@ DATASET_TYPES = ['train', 'validation', 'test']
 VALID_SENSOR_TYPES = ['A1', 'B1', 'Y1', 'NT', 'N1', 'T1']
 
 # TARGET threshold in meters between PRIMARY and VERIFIED
-TARGET_THRESH = 0.02 
+TARGET_THRESH = 0.04
 
 # Final columns to be included in the order requested
 CLEANED_COLUMNS = ['STATION_ID', 'DATE_TIME', 'SENSOR_USED_PRIMARY', 'PRIMARY',
