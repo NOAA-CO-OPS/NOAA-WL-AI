@@ -113,8 +113,8 @@ CLEANED_COLUMNS = ['STATION_ID', 'DATE_TIME', 'SENSOR_USED_PRIMARY', 'PRIMARY',
                    'PRIMARY_TRUE', 'PRIMARY_SIGMA', 'PRIMARY_SIGMA_TRUE',
                    'PRIMARY_RESIDUAL', 'BACKUP', 'BACKUP_TRUE', 'BACKUP_SIGMA',
                    'BACKUP_SIGMA_TRUE', 'BACKUP_RESIDUAL', 'PREDICTION',
-                   'VERIFIED', 'TARGET', 'OFFSETS_APPLIED', 'VERIFIED_SENSOR_ID',
-                   'PRESCALED_PRIMARY', 'PRESCALED_VERIFIED']
+                   'VERIFIED', 'VERIFIED_RESIDUAL','TARGET', 'OFFSETS_APPLIED', 
+                   'VERIFIED_SENSOR_ID']
 
 # Keys for the cleaning summary sheet. Each set has its own summary dictionary.
 CLEAN_STATS_KEYS = ['has_bad_results', 'n_raw', 'has_repeated_raw', 'n_total',
@@ -151,8 +151,8 @@ NUMBER_TYPES = [float, int, numpy.float, numpy.float16, numpy.float32,
 ARRAY_TYPES = [list, tuple, numpy.ndarray]
 
 # Settings for giant histogram with all differences
-GIANT_HIST_NBINS = 500
-GIANT_HIST_RANGE = [-20, 20]
+GIANT_HIST_NBINS = 50
+GIANT_HIST_RANGE = [-0.1, 0.1]
 
 ###############################################
 ## Define lambda functions
@@ -1677,27 +1677,27 @@ class station (object):
 
         return dataframe
 
-    def _scale_values (self, dataframe):
+    # def _scale_values (self, dataframe):
         
-        ''' A private function that scales PRIMARY, VERIFIED, BACKUP, and
-            PREDICTION by GT range stated in the station list. 
+    #     ''' A private function that scales PRIMARY, VERIFIED, BACKUP, and
+    #         PREDICTION by GT range stated in the station list. 
 
-            input params
-            ------------
-            dataframe (pandas.DataFrame): dataframe before GT scaling
+    #         input params
+    #         ------------
+    #         dataframe (pandas.DataFrame): dataframe before GT scaling
 
-            return param
-            ------------
-            dataframe (pandas.DataFrame): dataframe after GT scaling
-        '''
+    #         return param
+    #         ------------
+    #         dataframe (pandas.DataFrame): dataframe after GT scaling
+    #     '''
 
-        # Read GT range from station csv
-        self._logger.info ('    * GT range is {0}'.format (self._gt_range))
-        # Scale each column
-        for key in ['PRIMARY', 'VERIFIED', 'BACKUP', 'PREDICTION']:
-            dataframe[key] = dataframe[key] / self._gt_range
+    #     # Read GT range from station csv
+    #     self._logger.info ('    * GT range is {0}'.format (self._gt_range))
+    #     # Scale each column
+    #     for key in ['PRIMARY', 'VERIFIED', 'BACKUP', 'PREDICTION']:
+    #         dataframe[key] = dataframe[key] / self._gt_range
 
-        return dataframe
+    #     return dataframe
 
     def clean_raw_data (self, exclude_nan_verified=False):
 
@@ -1733,31 +1733,58 @@ class station (object):
         #  This is Step 9 in WL-AI Station File Requirements
         self._logger.info ('2. Define PRIMARY water level based on SENSOR_USED_PRIMARY')
         dataframe['PRIMARY'] = dataframe.apply (get_primaries, axis=1)
-        dataframe['PRESCALED_PRIMARY'] = dataframe.apply (get_primaries, axis=1)
 
         ## Apply offsets to PRIMARY water level
         #  This is Step 10 in WL-AI Station File Requirements
         self._logger.info ('3. Apply offset to PRIMARY')
         dataframe = self._apply_offsets_on_primary (dataframe)
 
-        ## Add PRIMARY_SIGMA column i.e. A1_WL_SIGMA & PRIMARY_RESIDUAL i.e. PRIMARY - PRED
+        ## Add PRIMARY_SIGMA column i.e. A1_WL_SIGMA
         #  This is Step 11 in WL-AI Station File Requirements
-        self._logger.info ('4. Define PRIMARY_SIGMA & PRIMARY_RESIDUAL')
+        self._logger.info ('4. Define PRIMARY_SIGMA')
         dataframe['PRIMARY_SIGMA'] = dataframe.apply (get_primary_sigmas, axis=1)
-        dataframe['PRIMARY_RESIDUAL'] = dataframe.PRIMARY - dataframe.PRED_WL_VALUE_MSL
 
-        ## Add BACKUP, BACKUP_SIGMA, BACKUP_RESIDUAL 
+        ## Add BACKUP & BACKUP_SIGMA 
         #  This is Step 12 in WL-AI Station File Requirements
-        self._logger.info ('5. Define BACKUP, BACKUP_SIGMA, & BACKUP_RESIDUAL')
+        self._logger.info ('5. Define BACKUP & BACKUP_SIGMA')
         dataframe['BACKUP'] = dataframe.B1_WL_VALUE_MSL
         dataframe['BACKUP_SIGMA'] = dataframe.B1_WL_SIGMA
+        
+        ## Cap PRIMARY & BACKUP between WL_MIN & WL_MAX and their SIGMAs between 0 and 1.
+        #  _cap_values() automatically counts the number of capped primary, backup, and their sigmas.
+        ## This is Step 13 in WL-AI Station File Requirements
+        self._logger.info ('6. Cap PRIMARY & BACKUP and their SIGMAs')
+        dataframe = self._cap_values (dataframe)  
+
+        ## Add PRIMARY_RESIDUAL i.e. PRIMARY - PRED
+        #  This is Step 14 in WL-AI Station File Requirements
+        self._logger.info ('7. Define PRIMARY_RESIDUAL')
+        dataframe['PRIMARY_RESIDUAL'] = dataframe.PRIMARY - dataframe.PRED_WL_VALUE_MSL
+
+        ## Add BACKUP_RESIDUAL 
+        #  This is Step 15 in WL-AI Station File Requirements
+        self._logger.info ('8. Define BACKUP_RESIDUAL')
         dataframe['BACKUP_RESIDUAL'] = dataframe.B1_WL_VALUE_MSL - dataframe.PRED_WL_VALUE_MSL
 
+        # ## Add PRIMARY_SIGMA column i.e. A1_WL_SIGMA & PRIMARY_RESIDUAL i.e. PRIMARY - PRED
+        # #  This is Step xx in WL-AI Station File Requirements
+        # self._logger.info ('5. Define PRIMARY_SIGMA & PRIMARY_RESIDUAL')
+        # dataframe['PRIMARY_SIGMA'] = dataframe.apply (get_primary_sigmas, axis=1)
+        # dataframe['PRIMARY_RESIDUAL'] = dataframe.PRIMARY - dataframe.PRED_WL_VALUE_MSL
+
+        # ## Add BACKUP, BACKUP_SIGMA, BACKUP_RESIDUAL 
+        # #  This is Step xx in WL-AI Station File Requirements
+        # self._logger.info ('6. Define BACKUP, BACKUP_SIGMA, & BACKUP_RESIDUAL')
+        # dataframe['BACKUP'] = dataframe.B1_WL_VALUE_MSL
+        # dataframe['BACKUP_SIGMA'] = dataframe.B1_WL_SIGMA
+        # dataframe['BACKUP_RESIDUAL'] = dataframe.B1_WL_VALUE_MSL - dataframe.PRED_WL_VALUE_MSL
+
         ## Add PREDICTION & VERIFIED
-        #  This is Step 13 in WL-AI Station File Requirements
-        self._logger.info ('6. Define VERIFIED & PREDICTION')
+        #  This is Step 16 in WL-AI Station File Requirements
+        self._logger.info ('9. Define VERIFIED, VERIFIED_RESIDUAL, VERIFIED_SENSOR_ID & PREDICTION')
         dataframe['VERIFIED'] = dataframe.VER_WL_VALUE_MSL
-        dataframe['PRESCALED_VERIFIED'] = dataframe.VER_WL_VALUE_MSL
+        dataframe['VERIFIED_RESIDUAL'] = dataframe.VER_WL_VALUE_MSL - dataframe.PRED_WL_VALUE_MSL
+        # dataframe['PRESCALED_VERIFIED'] = dataframe.VER_WL_VALUE_MSL
         dataframe['VERIFIED_SENSOR_ID'] = dataframe.VER_WL_SENSOR_ID
         dataframe['PREDICTION'] = dataframe.PRED_WL_VALUE_MSL
 
@@ -1774,8 +1801,8 @@ class station (object):
         self._set_stats (dataframe[is_bad], 'n_nan_verified_nan_primary')
 
         ## Add TARGET based on target threshold between PRIMARY and VER_WL_VALUE_MSL
-        #  This is Step 14 in WL-AI Station File Requirements
-        self._logger.info ('7. Define TARGET with threshold value of {0} meters'.format (TARGET_THRESH))
+        #  This is Step 17 in WL-AI Station File Requirements
+        self._logger.info ('10. Define TARGET with threshold value of {0} meters'.format (TARGET_THRESH))
         dataframe['TARGET'] = ((dataframe.PRIMARY - dataframe.VER_WL_VALUE_MSL).abs() <= TARGET_THRESH).astype (int)
         #  Count the number of spikes per set and in total
         is_spikes = numpy.logical_and (dataframe.TARGET==0,  ~dataframe.PRIMARY.isna())
@@ -1792,20 +1819,14 @@ class station (object):
 
         ## For PRIMARY, BACKUP, and their SIGMAs & RESIDUALs, replace all NaNs / missing
         #  entries with 0 and create dummy boolean column with _TRUE suffix in column names
-        #  This is Step 15 in WL-AI Station File Requirements
-        self._logger.info ('8. Replace NaNs with 0 and dummy column for PRIMARY, BACKUP and their SIGMA, RESIDUAL')    
-        dataframe = self._replace_nan (dataframe)
+        #  This is Step 18 in WL-AI Station File Requirements
+        self._logger.info ('11. Replace NaNs with 0 and dummy column for PRIMARY, BACKUP and their SIGMA, RESIDUAL')    
+        dataframe = self._replace_nan (dataframe)     
 
-        ## Cap PRIMARY & BACKUP between WL_MIN & WL_MAX and their SIGMAs between 0 and 1.
-        #  _cap_values() automatically counts the number of capped primary, backup, and their sigmas.
-        ## This is Step 16 in WL-AI Station File Requirements
-        self._logger.info ('9. Cap PRIMARY & BACKUP and their SIGMAs')
-        dataframe = self._cap_values (dataframe)       
-
-        ## Scale PRIMARY, BACKUP, and PREDICTION by GT range
-        ## This is Step 17 in WL-AI Station File Requirements
-        self._logger.info ('10. Scale PRIMARY, VERIFIED, BACKUP, and PREDICTION by GT range.')    
-        dataframe = self._scale_values (dataframe)
+        # ## Scale PRIMARY, BACKUP, and PREDICTION by GT range
+        # ## This is Step 19 in WL-AI Station File Requirements
+        # self._logger.info ('10. Scale PRIMARY, VERIFIED, BACKUP, and PREDICTION by GT range.')    
+        # dataframe = self._scale_values (dataframe)
 
         # Keep columns requested in specific order
         return dataframe[CLEANED_COLUMNS + ['setType']]
