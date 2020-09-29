@@ -687,7 +687,7 @@ class data_cleaner (object):
         ##  Format x-axis
         axis.set_xlim ([-0.1 ,0.1]) ## from -0.1 to 0.1 meters
         axis.set_xticks (numpy.linspace (-0.1, 0.1, 21)) # 21 xticks
-        axis.tick_params (axis='x', labelsize=6)
+        axis.tick_params (axis='x', labelsize=5)
         axis.set_xlabel ('Primary - Verified [meters]', fontsize=10)
 
         ##  Format y-axis
