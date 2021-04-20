@@ -12,6 +12,9 @@ Repository for the development of an AI QC and data fill system for NOAA water l
 ### Important Note
 Please leave this initial jupyter notebooks I developed un-edited, as I want to retain those results for future reference.  Instead please create new notebooks if attempting new approaches or using new data.  Thanks!
 
+### Important Updates
+2021/4/21 - Removed AI-data-retrieval directory from GitHub repository. This directory will be maintained and accessed via the CODE folder on CO-OPS Common for now. 
+
 ### Goal
 
 To create an AI system which will complete much of the manual processing and verification steps presently needed for NOAA 6 minute water level observations.  The system should be able to: 1) successfully classify 6 minute water level observations from the primary sensor as good or bad and 2) fill gaps in the resultant time series following standard CO-OPS protocols.  The system should be able to perform both of these steps in near real-time and at an accuracy level close to what is done by humans.
