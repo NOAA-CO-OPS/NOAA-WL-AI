@@ -34,10 +34,10 @@ This project represents an initial investigation into the application of Artific
 * Jan 2020 - AMS annual meeting presentation on initial results (DONE - [find the recorded pres here](https://ams.confex.com/ams/2020Annual/meetingapp.cgi/Paper/365782))
 * Mar 2020 - Finalize initial approach and begin scoping application to larger dataset (working on this now)
 * Jun 2020 - Create HPC Cloud Jupyter Hub for ML training and clean 50 station training/validation/testing data set
-* Sep 2020 - Complete the prototype model for data QC 
-* Dec 2020 - Complete the prototype model for data filling
-* Mar 2021 - Complete peer reviewed journal article or NOAA tech report documenting the approach
-* Jun 2021 - Demonstrate approach on all NWLON stations.  If successful, begin planning for operational implementation in FY22
+* TBD - Complete the prototype model for data QC 
+* TBD - Complete the prototype model for data filling
+* TBD - Complete peer reviewed journal article or NOAA tech report documenting the approach
+* TBD - Demonstrate approach on all NWLON stations.  If successful, begin planning for operational implementation in FY22
 
 
 For additional information, contact:
