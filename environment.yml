@@ -1,17 +1,16 @@
 name: wlai
 channels:
-  - conda-forge
+  - defaults
 dependencies:
-- python=3.7
-- pandas
-- scikit-learn
-- matplotlib
-- notebook
-- jupyterlab
-- git
-- dill
-- pip
-- pip:
-    - tensorflow
-    - keras
-
+  - dill
+  - git
+  - notebook
+  - python=3.7
+  - scikit-learn
+  - matplotlib
+  - jupyterlab
+  - pip
+  - pandas
+  - imbalanced-learn
+  - plotly
+prefix: C:\Users\Lindsay.Abrams\Anaconda3\envs\wlai

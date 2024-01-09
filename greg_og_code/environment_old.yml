@@ -1,0 +1,17 @@
+name: wlai
+channels:
+  - conda-forge
+dependencies:
+- python=3.7
+- pandas
+- scikit-learn
+- matplotlib
+- notebook
+- jupyterlab
+- git
+- dill
+- pip
+- pip:
+    - tensorflow
+    - keras
+
